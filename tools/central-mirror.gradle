@@ -1,0 +1,26 @@
+def centralMirror = "https://maven-central.storage-download.googleapis.com/maven2"
+def redirectCentral = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository) {
+        def url = repo.url.toString()
+        if (url.contains("repo.maven.apache.org") || url.contains("repo1.maven.org")) {
+            repo.url = uri(centralMirror)
+        }
+        if (url.contains("plugins.gradle.org")) {
+            repo.content { excludeGroupByRegex("org\\.jetbrains\\..*") }
+        }
+    }
+}
+beforeSettings { settings ->
+    settings.buildscript.repositories.maven { url = uri(centralMirror) }
+    settings.buildscript.repositories.all(redirectCentral)
+    settings.pluginManagement.repositories.gradlePluginPortal()
+    settings.pluginManagement.repositories.maven { url = uri(centralMirror) }
+    settings.pluginManagement.repositories.all(redirectCentral)
+    settings.dependencyResolutionManagement.repositories.maven { url = uri(centralMirror) }
+    settings.dependencyResolutionManagement.repositories.all(redirectCentral)
+}
+allprojects {
+    buildscript.repositories.maven { url = uri(centralMirror) }
+    buildscript.repositories.all(redirectCentral)
+    repositories.all(redirectCentral)
+}

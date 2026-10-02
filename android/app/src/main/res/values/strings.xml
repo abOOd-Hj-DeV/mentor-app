@@ -1,0 +1,3 @@
+<resources>
+    <string name="layout_description">يرسل Mentor حدود عناصر الشاشة وتوقيتها محلياً عبر USB لتحليل الصورة على جهازك. لا يرسل نصوص الصفحة. فعّل الخدمة فقط إذا وافقت على هذه الوظيفة.</string>
+</resources>
