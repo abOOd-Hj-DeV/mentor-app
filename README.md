@@ -38,7 +38,30 @@ cp tools/central-mirror.gradle "$HOME/.gradle/init.d/mentor-central-mirror.gradl
 
 الحالة «قناة ADB متصلة» تعني وجود مستقبِل فعلي عبر ADB، وليس مجرد توصيل USB.
 التطبيق يوفّر خريطة العناصر؛ إصدار التحذيرات الحالي مسجّل في C++.
-قناة أوامر `k230_companion` لعرض التحذير على الهاتف لم تُنفّذ هنا.
+قناة أوامر `k230_companion` منفّذة: تغطية مناطق، حاجب هادئ، وانتقال HOME يُؤكّد من الهاتف.
+Flutter يعرض حالة المكوّن الأصلي ولا يمنح الطفل صلاحية إلغاء الحماية.
+يلزم قفل جهاز آمن، اقتران مباشر بQR ومقارنة بصمات، وملف عمر موثّق قبل التنفيذ.
+التهيئة من Application وخدمة إمكانية الوصول لا تتطلب فتح Flutter بعد إعادة تشغيل العملية.
+
+### بوابة ساعة الالتقاط
+
+الاتصال وحده لا يفعّل التنفيذ. `bind.capture_pts_us=null` يبدأ تفاوضاً بحالة `bound.pending`؛
+ثم يرسل C++ قيم PTS الأصلية لفيديو scrcpy 4.0 في bind متتابع، بلا إعادة تأريخ أو replay.
+الهاتف يقارن كل قيمة مع `System.nanoTime()/1000` محلياً: ≥3 عينات صارمة التزايد،
+نافذة ≥1 ثانية على كلتا الساعتين، ≤8 عينات/3 ثوانٍ، تأخر ≤750ms ومستقبل ≤50ms.
+أي خطأ أو انقطاع يعيد `clock_unverified` ولا يزيل حاجباً موجوداً. إعلان المشغّل تشخيصي فقط.
+scrcpy يمرّر `MediaCodec.BufferInfo.presentationTimeUs` دون تغيير؛ ساعة monotonic لا تشمل suspend،
+بخلاف elapsedRealtime. لا يُستخدم تحويل epoch أو إزاحة وقت الاستلام لتجاوز الفشل.
+
+المنتج الموثوق هو adb shell/root مع jar scrcpy 4.0 المثبّت بالهاش في C++؛
+القياس يثبت توافق الساعة، لا أصالة الفيديو أمام root/inspector خبيث.
+لا يوجد قياس هاتف حقيقي مثبت في هذا الفرع بعد. مسار التحقق: ثبّت APK، اقترن واضبط العمر،
+شغّل C++ بالالتقاط الرسمي، تحقق من pending ثم accepted على ≥1s، واختبر فصل/إعادة اتصال
+وسكون الجهاز وPTS قديم/مستقبلي. إذا تجاوز التأخر الحد يبقى التنفيذ مرفوضاً، دون تخفيف الحدود.
+
+المراجع: [scrcpy Streamer](https://github.com/Genymobile/scrcpy/blob/v4.0/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java)،
+[مصدر الالتقاط](https://github.com/Genymobile/scrcpy/blob/v4.0/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java)،
+[ساعة Android](https://developer.android.com/reference/android/os/SystemClock).
 
 ## البيانات المرسلة
 

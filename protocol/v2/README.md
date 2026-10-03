@@ -1,0 +1,7 @@
+# Mentor v2 protocol assets
+
+Sorted ASCII JSON keys, compact UTF-8, no BOM, duplicate keys/unknown properties rejected. UUIDs are lowercase v4; counters/timestamps are canonical unsigned decimal strings <= signed int64. Binary is canonical unpadded base64url. Envelope numbers are integer lexical forms; decrypted incident scores are finite [0,1]. Runtime validators additionally enforce byte/decoded-binary sizes, DER, key suite/material, signatures, distinct peers, score sums, stage/action correspondence, evidence counts/spans, clock/revision/replay semantics and nullable-field relationships. JSON Schema alone is not a security boundary.
+
+The public signature fixture freezes canonical bytes/context/signature input and a signed pairing transcript. Random ciphertext is opaque test data, **not an HPKE decryption known-answer vector**; JVM tests perform real Tink HPKE round trips separately. No private keys are present. Node and JVM both consume this same frozen fixture.
+
+`manifest.json` hashes every asset excluding itself. `npm run schemas:check` in cloud/functions compiles strict draft-2020 schemas, validates fixture expectations and fails if any asset/hash/file set differs. Changes require explicit review and synchronization across repositories. These are Mentor E2EE/native-display equivalents only; companion hello/bind/state/decision/ACK/released assets and enforcement thresholds/geometry belong to the independent enforcement writer. Cross-repository parity must be reconciled during integration.
