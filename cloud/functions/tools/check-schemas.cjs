@@ -11,7 +11,10 @@ for (const file of files) {
   if (createHash('sha256').update(bytes).digest('hex') !== manifest.files[file]) throw Error(`hash mismatch: ${file}`);
 }
 const ajv = new Ajv2020({strict: true, allErrors: true});
-const validators = Object.fromEntries(files.filter(p => p.endsWith('.schema.json')).map(p => [p, ajv.compile(JSON.parse(readFileSync(join(dir, p), 'utf8')))]));
+// Canonical companion conditionals inherit numeric constraints from their enclosing policy.
+const companionAjv = new Ajv2020({strict: true, strictTypes: false, allErrors: true});
+const validators = Object.fromEntries(files.filter(p => p.endsWith('.schema.json')).map(p => [p,
+  (p === 'companion.schema.json' ? companionAjv : ajv).compile(JSON.parse(readFileSync(join(dir, p), 'utf8')))]));
 const fixtures = JSON.parse(readFileSync(join(dir, 'fixtures/contracts.json'), 'utf8'));
 for (const vector of fixtures) {
   if (!validators[vector.schema]) throw Error('unknown fixture schema');
@@ -19,3 +22,14 @@ for (const vector of fixtures) {
   if (valid !== vector.valid) throw Error(`schema vector mismatch: ${vector.id}: ${JSON.stringify(validators[vector.schema].errors)}`);
 }
 console.log(`${Object.keys(validators).length} strict draft2020 schemas, ${fixtures.length} fixtures and ${files.length} asset hashes verified`);
+const companion = JSON.parse(readFileSync(join(dir, 'companion.manifest.json'), 'utf8'));
+for (const [file, hash] of Object.entries(companion.sha256)) {
+  if (createHash('sha256').update(readFileSync(join(dir, file))).digest('hex') !== hash) throw Error(`companion hash mismatch: ${file}`);
+}
+for (const name of ['hello', 'bind', 'bound', 'state', 'decision', 'ack', 'released']) {
+  const value = JSON.parse(readFileSync(join(dir, `fixtures/${name}.json`), 'utf8'));
+  if (!validators['companion.schema.json'](value)) throw Error(`companion fixture mismatch: ${name}: ${JSON.stringify(validators['companion.schema.json'].errors)}`);
+}
+const traces = JSON.parse(readFileSync(join(dir, 'fixtures/policy-traces.json'), 'utf8'));
+if (traces.contract !== companion.contract || traces.cases.length !== 40) throw Error('canonical policy trace set differs');
+console.log('Canonical companion SHA256 manifest, seven wire fixtures and 40 policy traces verified');

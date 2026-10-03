@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicReference
 internal class CompanionSocket(
     private val main: (() -> Unit) -> Unit,
     private val hello: (String) -> Map<String, Any?>,
-    private val onCommand: (String, CompanionCommand) -> Unit,
+    private val onCommand: (String, CompanionCommand, Long) -> Unit,
     private val onConnect: (String) -> Unit,
     private val onDisconnect: (String) -> Unit,
 ) : AutoCloseable {
@@ -103,6 +103,7 @@ internal class CompanionSocket(
                         catch (_: SocketTimeoutException) { framing.checkDeadline(nowUs()); continue }
                         if (count < 0) break
                         for (line in framing.append(chunk, count, nowUs())) {
+                            val receivedUs = nowUs()
                             val cmd = CompanionProtocol.parse(line)
                             requireProtocol(cmd.sessionId == id, "session_mismatch")
                             requireProtocol(cmd.seq > lastSeq, "stale")
@@ -114,7 +115,7 @@ internal class CompanionSocket(
                             // Fixed pending count also bounds the Handler queue if the UI thread stalls.
                             requireProtocol(pending.incrementAndGet() <= 32, "busy")
                             main {
-                                try { if (current.get() === this && open.get()) onCommand(id, cmd) }
+                                try { if (current.get() === this && open.get()) onCommand(id, cmd, receivedUs) }
                                 finally { pending.decrementAndGet() }
                             }
                         }

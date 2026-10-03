@@ -3,6 +3,37 @@ import 'package:mentor_app/protection/models.dart';
 import 'support/fake_protection_repository.dart';
 
 void main() {
+  test(
+    'active state requires original target token and positive restored revision',
+    () {
+      final active = object(stateData(active: true)['activeProtection']);
+      final parsed = ActiveProtection.fromNative(active);
+      expect(parsed.actionRevision, '1');
+      expect(parsed.targetScreenToken, active['targetScreenToken']);
+      for (final invalid in [null, '0', '01', '-1', 1, '9223372036854775808']) {
+        expect(
+          () => ActiveProtection.fromNative({
+            ...active,
+            'actionRevision': invalid,
+          }),
+          throwsFormatException,
+        );
+      }
+      expect(
+        () =>
+            ActiveProtection.fromNative({...active, 'targetScreenToken': null}),
+        throwsFormatException,
+      );
+      expect(
+        () => ActiveProtection.fromNative({...active, 'stage': 0}),
+        throwsFormatException,
+      );
+      expect(
+        ProtectionState.fromNative(stateData(active: false)).activeProtection,
+        isNull,
+      );
+    },
+  );
   group('age profiles', () {
     for (final age in [10, 11, 12, 13, 14, 15]) {
       test('age $age maps explicitly to expected thresholds', () {

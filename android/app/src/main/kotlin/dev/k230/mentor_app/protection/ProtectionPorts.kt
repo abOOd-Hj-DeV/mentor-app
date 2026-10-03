@@ -95,7 +95,7 @@ internal object UnconfiguredSecurity : GuardianSecurityDelegate {
  * not a string in bind, receipt-time rebasing, Flutter arguments, or a plausibility check alone. */
 internal object ProtectionIntegration {
     var security: GuardianSecurityDelegate = UnconfiguredSecurity
-    var guardianRelease: ((String) -> Unit)? = null
+    var guardianRelease: ((String, Long, (Boolean) -> Unit) -> Unit)? = null
     var activeEvent: () -> String? = { null }
     var receiveProtectedControl: ((ByteArray, (SecurityReply) -> Unit) -> Unit)? = null
     var onDisplayStateChanged: (() -> Unit)? = null

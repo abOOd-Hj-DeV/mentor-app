@@ -221,6 +221,17 @@ class ProtectionControllerTest {
         assertEquals(1,h.actions.clearCount)
         assertNull(h.controller.active)
     }
+    @Test fun confirmedGrantNeverReportsSuccessWhileBusyOrForOtherEvent() {
+        val h = Harness()
+        h.actions.homeVerified = null
+        h.decide(ProtocolFixtures.parse(ProtocolFixtures.decision(3,.96,0.0,0.0,longChain)))
+        assertFalse(h.controller.confirmedGuardianGrant(ProtocolFixtures.EVENT))
+        assertEquals(0,h.actions.clearCount)
+        h.actions.pendingHome!!(false)
+        assertFalse(h.controller.confirmedGuardianGrant(ProtocolFixtures.SCREEN))
+        assertTrue(h.controller.confirmedGuardianGrant(ProtocolFixtures.EVENT))
+        assertFalse(h.controller.confirmedGuardianGrant(ProtocolFixtures.EVENT))
+    }
     @Test fun failedPersistenceAcknowledgesActualOverlayButReportsStorageFailure() {
         val h = Harness()
         h.journal.finishBroken = true

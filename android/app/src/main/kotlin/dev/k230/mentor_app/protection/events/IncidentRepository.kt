@@ -15,24 +15,30 @@ class IncidentRepository(private val journal: SealedStore, private val outbox: E
                          private val signer: EnvelopeSigner, private val wallMs: () -> Long = System::currentTimeMillis) {
     /** Run off the enforcement/UI threads. Persist before crypto/network, retry recovery is idempotent. */
     @Synchronized fun record(metadata: IncidentMetadata): OutboxEntry {
-        val plaintext = metadata.toJson()
-        StrictJson.ensure(metadata.childDeviceId == pair.child.deviceId, "pair_mismatch")
-        val key = "i_${StrictJson.uuid(metadata.eventId)}"
+        return recordJson(metadata.toJson())
+    }
+    private fun recordJson(plaintext: JsonObject): OutboxEntry {
+        PayloadValidation.incident(plaintext)
+        StrictJson.ensure(StrictJson.string(plaintext, "child_device_id") == pair.child.deviceId, "pair_mismatch")
+        val revision = StrictJson.decimal(plaintext, "incident_revision", true)
+        val key = "i_${StrictJson.uuid(StrictJson.string(plaintext, "event_id"))}"
         val existing = journal.get(key)?.let { StrictJson.parse(it) }
         val messageId: String
         if (existing != null) {
             val old = existing["metadata"].asJsonObject
             val oldRevision = StrictJson.decimal(old, "incident_revision", true)
-            StrictJson.ensure(metadata.revision >= oldRevision, "stale")
-            if (metadata.revision == oldRevision) {
+            StrictJson.ensure(revision >= oldRevision, "stale")
+            if (revision == oldRevision) {
                 StrictJson.ensure(old == plaintext, "event_conflict")
                 messageId = StrictJson.string(existing, "message_id")
-                val persisted = outbox.get(messageId)
-                if (persisted != null) return OutboxEntry(messageId, persisted, StrictJson.sha(persisted))
                 StrictJson.ensure(!existing["uploaded"].asBoolean, "already_uploaded")
-            } else messageId = UUID.randomUUID().toString()
+                return enqueuePending(existing)
+            } else {
+                if (!existing["uploaded"].asBoolean) enqueuePending(existing)
+                messageId = UUID.randomUUID().toString()
+            }
         } else {
-            StrictJson.ensure(journal.names().size < 4096, "busy")
+            StrictJson.ensure(journal.names().count { it.startsWith("i_") } < 4096, "busy")
             messageId = UUID.randomUUID().toString()
         }
         val pending = JsonObject().apply {
@@ -40,8 +46,52 @@ class IncidentRepository(private val journal: SealedStore, private val outbox: E
             addProperty("recorded_at_ms", wallMs().toString())
         }
         journal.put(key, StrictJson.json(pending))
-        val bytes = crypto.seal("incident", plaintext, pair, signer, messageId)
+        val entry = enqueuePending(pending)
+        if (existing != null) journal.delete("c_${StrictJson.string(existing, "message_id")}")
+        return entry
+    }
+    private fun enqueuePending(record: JsonObject): OutboxEntry {
+        val messageId = StrictJson.string(record, "message_id")
+        val key = "c_$messageId"
+        val retained = journal.get(key)
+        val bytes = retained ?: outbox.get(messageId) ?: crypto.seal("incident",
+            record["metadata"].asJsonObject, pair, signer, messageId)
+        if (retained == null) journal.put(key, bytes)
         return outbox.enqueue(bytes)
+    }
+    @Synchronized fun recoverPending(): Int {
+        var recovered = 0
+        journal.names().filter { it.startsWith("i_") }.forEach { key ->
+            val record = StrictJson.parse(journal.get(key) ?:
+                throw dev.k230.mentor_app.protection.security.SecurityFailure("storage_failed"))
+            if (!record["uploaded"].asBoolean) {
+                enqueuePending(record)
+                recovered++
+            }
+        }
+        return recovered
+    }
+    @Synchronized fun recordRelease(eventId: String, actionRevision: Long): OutboxEntry? {
+        val old = journal.get("i_${StrictJson.uuid(eventId)}")?.let(StrictJson::parse) ?: return null
+        val payload = old["metadata"].asJsonObject.deepCopy()
+        if (payload["executed"].asJsonObject["status"].asString == "released") return null
+        payload.addProperty("incident_revision", Math.addExact(maxOf(actionRevision,
+            StrictJson.decimal(payload, "incident_revision", true)), 1).toString())
+        payload.addProperty("occurred_at_ms", wallMs().toString())
+        payload.add("executed", JsonObject().apply {
+            addProperty("action", "none"); addProperty("stage", 0); addProperty("status", "released"); add("error", null)
+        })
+        return recordJson(payload)
+    }
+    @Synchronized fun acknowledgeMessage(messageId: String, status: String, sha256: String) {
+        StrictJson.uuid(messageId)
+        val event = journal.names().filter { it.startsWith("i_") }.firstOrNull {
+            val record = StrictJson.parse(journal.get(it) ?: throw dev.k230.mentor_app.protection.security.SecurityFailure("storage_failed"))
+            StrictJson.string(record, "message_id") == messageId
+        }
+        if (event == null) outbox.acknowledge(messageId, status, sha256)
+        else acknowledge(event.removePrefix("i_"), messageId, status, sha256)
+        pruneUploaded()
     }
 
     @Synchronized fun acknowledge(eventId: String, messageId: String, status: String, sha256: String) {
@@ -69,7 +119,12 @@ class IncidentRepository(private val journal: SealedStore, private val outbox: E
             val o = StrictJson.parse(journal.get(it) ?: throw dev.k230.mentor_app.protection.security.SecurityFailure("storage_failed"))
             o["uploaded"].asBoolean && wallMs() - StrictJson.decimal(o, "recorded_at_ms") >= 86400000L
         }
-        expired.forEach(journal::delete)
+        expired.forEach { key ->
+            val record = StrictJson.parse(journal.get(key) ?:
+                throw dev.k230.mentor_app.protection.security.SecurityFailure("storage_failed"))
+            journal.delete("c_${StrictJson.string(record, "message_id")}")
+            journal.delete(key)
+        }
         return expired.size
     }
 }

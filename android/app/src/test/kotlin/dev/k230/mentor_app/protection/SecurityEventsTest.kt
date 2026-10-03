@@ -26,9 +26,21 @@ class SecurityEventsTest {
     private val boot = "20000000-0000-4000-8000-000000000006"
     private class Disk : BlobStore {
         val values = mutableMapOf<String, ByteArray>()
+        var failWritePrefix: String? = null
+        var failDeletePrefix: String? = null
         override fun read(name: String) = values[name]?.clone()
-        override fun write(name: String, bytes: ByteArray) { values[name] = bytes.clone() }
-        override fun delete(name: String) { values.remove(name) }
+        override fun write(name: String, bytes: ByteArray) {
+            if (failWritePrefix?.let(name::startsWith) == true) {
+                failWritePrefix = null; throw IllegalStateException("interrupted write")
+            }
+            values[name] = bytes.clone()
+        }
+        override fun delete(name: String) {
+            if (failDeletePrefix?.let(name::startsWith) == true) {
+                failDeletePrefix = null; throw IllegalStateException("interrupted delete")
+            }
+            values.remove(name)
+        }
         override fun names() = values.keys.sorted()
     }
     private fun aead(): Aead {
@@ -232,6 +244,15 @@ class SecurityEventsTest {
         active = false; rejected { outbox.entries() }
         active = true; repo.acknowledge(metadata(child.peer.deviceId).eventId, item.messageId, "duplicate", item.sha256)
         assertNull(outbox.get(item.messageId))
+        val released = repo.recordRelease(metadata(child.peer.deviceId).eventId, 2)!!
+        val payload = crypto.open(released.envelope, pair, guardian.peer.deviceId) { guardian.hpke.getPrimitive(HybridDecrypt::class.java) }.plaintext
+        assertEquals("released", payload["executed"].asJsonObject["status"].asString)
+        assertEquals("3", payload["incident_revision"].asString)
+        assertNull(repo.recordRelease(metadata(child.peer.deviceId).eventId, 2))
+        rejected { repo.acknowledgeMessage(released.messageId, "stored", "a".repeat(64)) }
+        assertNotNull(outbox.get(released.messageId))
+        repo.acknowledgeMessage(released.messageId, "stored", released.sha256)
+        assertNull(outbox.get(released.messageId))
     }
 
     @Test fun encryptedRelayStateSurvivesRestartWithoutExposingCursorAndCorruptionFailsClosed() {
@@ -244,6 +265,51 @@ class SecurityEventsTest {
         assertFalse(disk.values["relay_state"]!!.toString(Charsets.UTF_8).contains("opaque_cursor"))
         disk.values["relay_state"]!![4] = (disk.values["relay_state"]!![4].toInt() xor 1).toByte()
         rejected { restarted.pairPhase() }
+    }
+
+    @Test fun pendingIncidentsRecoverIntentAndSealedBytesBeforeEnqueue() {
+        for (afterSealing in listOf(false, true)) {
+            val guardian = keys("1"); val child = keys("2"); val pair = TrustedPair(pairId, guardian.peer, child.peer)
+            val crypto = IncidentCrypto(codec); val key = aead()
+            val journalDisk = Disk(); val outboxDisk = Disk()
+            val journal = SealedStore(journalDisk, key, pairId, "journal")
+            val outbox = EncryptedOutbox(SealedStore(outboxDisk, key, pairId, "outbox"), pair, crypto) { true }
+            val repository = IncidentRepository(journal, outbox, pair, crypto, signer(child.ec))
+            if (afterSealing) outboxDisk.failWritePrefix = "e_" else journalDisk.failWritePrefix = "c_"
+            rejected { repository.record(metadata(child.peer.deviceId)) }
+            assertEquals(0, outbox.size())
+            val pending = StrictJson.parse(journal.get("i_${metadata(child.peer.deviceId).eventId}")!!)
+            val id = StrictJson.string(pending, "message_id")
+            val sealed = journal.get("c_$id")
+            assertEquals(afterSealing, sealed != null)
+            val restarted = IncidentRepository(SealedStore(journalDisk, key, pairId, "journal"), outbox,
+                pair, crypto, signer(child.ec))
+            assertEquals(1, restarted.recoverPending())
+            val item = outbox.entries().single()
+            assertEquals(id, item.messageId)
+            if (sealed != null) assertArrayEquals(sealed, item.envelope)
+            assertEquals(metadata(child.peer.deviceId).eventId, StrictJson.string(crypto.open(item.envelope,
+                pair, guardian.peer.deviceId) { guardian.hpke.getPrimitive(HybridDecrypt::class.java) }.plaintext, "event_id"))
+            restarted.recoverPending()
+            assertArrayEquals(item.envelope, outbox.entries().single().envelope)
+        }
+    }
+
+    @Test fun serverAckBeforeOutboxDeletionSurvivesRestartWithoutResealing() {
+        val guardian = keys("1"); val child = keys("2"); val pair = TrustedPair(pairId, guardian.peer, child.peer)
+        val crypto = IncidentCrypto(codec); val key = aead(); val journalDisk = Disk(); val outboxDisk = Disk()
+        val outbox = EncryptedOutbox(SealedStore(outboxDisk, key, pairId, "outbox"), pair, crypto) { true }
+        val repository = IncidentRepository(SealedStore(journalDisk, key, pairId, "journal"), outbox,
+            pair, crypto, signer(child.ec))
+        val incident = metadata(child.peer.deviceId); val item = repository.record(incident)
+        outboxDisk.failDeletePrefix = "e_"
+        rejected { repository.acknowledge(incident.eventId, item.messageId, "stored", item.sha256) }
+        val restarted = IncidentRepository(SealedStore(journalDisk, key, pairId, "journal"), outbox,
+            pair, crypto, signer(child.ec))
+        assertEquals(0, restarted.recoverPending())
+        assertArrayEquals(item.envelope, outbox.entries().single().envelope)
+        restarted.acknowledge(incident.eventId, item.messageId, "duplicate", item.sha256)
+        assertEquals(0, outbox.size())
     }
 
     @Test fun metadataHasNoMediaAndEnforcesHentaiCapScoresAndStrictAges() {

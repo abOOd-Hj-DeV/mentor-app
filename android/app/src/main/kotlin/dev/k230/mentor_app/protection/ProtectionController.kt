@@ -187,6 +187,11 @@ internal class ProtectionController(
         if (active?.eventId != eventId) return
         if (busy) pendingGrant = eventId else release("guardian_grant")
     }
+    fun confirmedGuardianGrant(eventId: String): Boolean {
+        if (busy || active?.eventId != eventId) return false
+        release("guardian_grant")
+        return active == null
+    }
 
     private fun settled() {
         busy = false

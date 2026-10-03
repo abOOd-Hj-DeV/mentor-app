@@ -34,6 +34,10 @@ class MainActivity : FlutterActivity() {
                 }
             }
     }
+    override fun onResume() {
+        super.onResume()
+        NativeSecurityProvider.install(this).foreground()
+    }
     override fun onPause() {
         protectionChannel?.backgrounded()
         super.onPause()

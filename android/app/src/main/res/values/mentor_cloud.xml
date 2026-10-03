@@ -6,6 +6,6 @@
     <string name="mentor_firebase_api_key" translatable="false"></string>
     <string name="mentor_firebase_project_id" translatable="false"></string>
     <string name="mentor_firebase_sender_id" translatable="false"></string>
-    <string name="mentor_relay_adapter_factory" translatable="false"></string>
+    <string name="mentor_relay_adapter_factory" translatable="false">dev.k230.mentor_app.protection.MentorRelayFactory</string>
     <bool name="mentor_firebase_anonymous_auth">false</bool>
 </resources>

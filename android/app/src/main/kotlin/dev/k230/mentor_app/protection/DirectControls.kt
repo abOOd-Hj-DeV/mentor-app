@@ -16,7 +16,8 @@ import java.util.UUID
 
 internal class DirectControls(private val store: SealedStore, private val pair: TrustedPair,
     private val signer: EnvelopeSigner, private val boot: String, private val now: () -> Long,
-    private val activeEvent: () -> String?, private val codec: Base64Codec = AndroidBase64) {
+    private val activeEvent: () -> String?, private val codec: Base64Codec = AndroidBase64,
+    private val grant: (String) -> Boolean = { false }) {
     private fun state() = store.get("control_state")?.let(StrictJson::parse) ?: JsonObject().apply {
         addProperty("revision", "0"); add("profile", null); add("challenge", null)
         add("last_control", null); add("receipt", null); addProperty("revoked", false)
@@ -81,10 +82,16 @@ internal class DirectControls(private val store: SealedStore, private val pair: 
             })
         }
         if (operation == "revoke_pair") next.addProperty("revoked", true)
-        val receipt = ControlReceipt(id, revision, true, null, policyRevision)
+        val receipt = ControlReceipt(id, revision, operation != "unlock",
+            if (operation == "unlock") "action_failed" else null, policyRevision)
         next.addProperty("revision", revision.toString()); next.add("challenge", null)
         next.add("last_control", control); next.add("receipt", receipt.toJson())
         store.put("control_state", StrictJson.json(next))
+        if (operation == "unlock" && grant(StrictJson.string(control["grant"].asJsonObject, "event_id"))) {
+            val confirmed = receipt.copy(applied = true, error = null)
+            next.add("receipt", confirmed.toJson()); store.put("control_state", StrictJson.json(next))
+            return confirmed
+        }
         return receipt
     }
     companion object {
