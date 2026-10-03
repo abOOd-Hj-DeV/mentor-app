@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Public identifiers only. Empty defaults mean Unconfigured and cause zero relay networking. -->
+    <string name="mentor_relay_url" translatable="false"></string>
+    <string name="mentor_firebase_application_id" translatable="false"></string>
+    <string name="mentor_firebase_api_key" translatable="false"></string>
+    <string name="mentor_firebase_project_id" translatable="false"></string>
+    <string name="mentor_firebase_sender_id" translatable="false"></string>
+    <string name="mentor_relay_adapter_factory" translatable="false"></string>
+    <bool name="mentor_firebase_anonymous_auth">false</bool>
+</resources>

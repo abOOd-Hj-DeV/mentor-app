@@ -1,6 +1,7 @@
 # Native security/events handoff
 
 `NativeSecurityProvider` composes `protection.security`/`protection.events` from `MentorApplication` and `LayoutService`, independent of Flutter. MainActivity attaches only credential/camera UI and results. Typed Flutter channels cannot set roles, mutate keys or release a shield. Device secure lock, Keystore, allowBackup=false, dependency verification/locking remain mandatory. This is not a claim of measured hardware or production cloud readiness.
+Optional `protection.cloud` uses real Firebase Auth/FCM, bounded exact-byte HTTP and WorkManager; the authoritative provider adapter is still being integrated. Defaults start no relay networking. See [native relay integration](NATIVE_RELAY.md).
 
 ## Compose authority, never trust Flutter role choice
 
@@ -22,7 +23,7 @@ Construct only typed IncidentMetadata from independently validated **actual** ex
 
 Typed sealControl requires guardian authentication; sealReceipt uses typed ControlReceipt. `DirectControls` requires signed pair-pinned, boot-scoped one-use challenge QR, persisted monotone control revisions, and the actual active event for unlock. Wall-clock commands remain rejected without a verified wall-clock source. SET_PROFILE persists a native profile; REVOKE_PAIR does not synthesize an unlock. Receipts are persisted before enqueue and retried byte-exactly. No public free-form/media seal API is exposed.
 
-All synchronous disk/crypto primitives run on bounded single-writer queues, not UI/analysis/enforcement hot paths. Upload/storage failure must never stop local enforcement. Native QR capture is non-exported/FLAG_SECURE; a QR scanner in the opaque help panel can receive the guardian response without exposing protected content. Native HTTP/Firebase Auth/FCM and periodic recovery still await the supplemental transport adapter; cloud health is `unconfigured`, not a fake delivery. No cloud service is deployed.
+All synchronous disk/crypto primitives run on bounded single-writer queues, not UI/analysis/enforcement hot paths. Upload/storage failure must never stop local enforcement. Native QR capture is non-exported/FLAG_SECURE; a QR scanner in the opaque help panel can receive the guardian response without exposing protected content. Optional relay transport awaits the provider adapter; health remains `unconfigured` until actual binding/Auth/configuration. No cloud service is deployed.
 
 ## Validation limits
 
