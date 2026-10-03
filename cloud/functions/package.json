@@ -1,0 +1,31 @@
+{
+  "name": "mentor-ciphertext-relay",
+  "private": true,
+  "version": "2.0.0",
+  "engines": {"node": "22"},
+  "main": "lib/src/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "test": "npm run build && node --test lib/test/*.test.js",
+    "test:emulator": "npm run build && node --test lib/test/emulator.integration.js",
+    "schemas:check": "node tools/check-schemas.cjs"
+  },
+  "dependencies": {
+    "@google-cloud/kms": "6.2.1",
+    "firebase-admin": "14.5.0",
+    "firebase-functions": "7.4.0",
+    "jsonc-parser": "3.3.1",
+    "protobufjs": "7.6.6"
+  },
+  "overrides": {"uuid": "11.1.1"},
+  "devDependencies": {
+    "@types/node": "22.13.1",
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "typescript-eslint": "8.71.0",
+    "typescript": "5.7.3",
+    "ajv": "8.20.0"
+  }
+}
