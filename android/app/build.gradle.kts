@@ -47,7 +47,13 @@ flutter {
 dependencies {
     implementation("com.google.crypto.tink:tink-android:1.16.0")
     implementation("com.google.code.gson:gson:2.13.1")
+    implementation(platform("com.google.firebase:firebase-bom:33.16.0"))
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("androidx.work:work-runtime:2.10.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 dependencyLocking {

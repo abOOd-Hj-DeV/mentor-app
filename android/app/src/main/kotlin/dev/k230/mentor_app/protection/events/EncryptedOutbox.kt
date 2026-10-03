@@ -18,6 +18,16 @@ class EncryptedOutbox(private val store: SealedStore, private val pair: TrustedP
             OutboxEntry(name.removePrefix("e_"), bytes, StrictJson.sha(bytes))
         }
     }
+    @Synchronized fun readyEntries(nowMs: Long, limit: Int = 50): List<OutboxEntry> {
+        StrictJson.ensure(nowMs >= 0 && limit in 1..50 && canUpload(), "pair_revoked")
+        return names().filter { name ->
+            val retry = store.get("r_${name.removePrefix("e_")}")?.let(StrictJson::parse)
+            retry == null || StrictJson.decimal(retry, "next_ms") <= nowMs
+        }.take(limit).map { name ->
+            val bytes = store.get(name) ?: throw dev.k230.mentor_app.protection.security.SecurityFailure("storage_failed")
+            OutboxEntry(name.removePrefix("e_"), bytes, StrictJson.sha(bytes))
+        }
+    }
     private fun names() = store.names().filter { it.startsWith("e_") }
     @Synchronized fun get(messageId: String): ByteArray? = store.get("e_${StrictJson.uuid(messageId)}")
     @Synchronized fun size(): Int = names().size

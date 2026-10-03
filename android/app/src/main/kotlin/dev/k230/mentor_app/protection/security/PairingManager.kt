@@ -4,6 +4,36 @@ import com.google.gson.JsonObject
 import java.security.SecureRandom
 import java.util.UUID
 
+enum class PairRole { GUARDIAN, CHILD }
+
+class RetainedPairTranscript internal constructor(
+    val pair: TrustedPair,
+    offer: JsonObject,
+    response: JsonObject,
+    confirmation: JsonObject,
+    val sha256: String,
+) {
+    private val signedOffer = offer.deepCopy()
+    private val signedResponse = response.deepCopy()
+    private val signedConfirmation = confirmation.deepCopy()
+    val offer: JsonObject get() = signedOffer.deepCopy()
+    val response: JsonObject get() = signedResponse.deepCopy()
+    val confirmation: JsonObject get() = signedConfirmation.deepCopy()
+    fun role(deviceId: String): PairRole = when (StrictJson.uuid(deviceId)) {
+        pair.guardian.deviceId -> PairRole.GUARDIAN
+        pair.child.deviceId -> PairRole.CHILD
+        else -> throw SecurityFailure("pair_mismatch")
+    }
+    fun registrationBody(): ByteArray = StrictJson.canonical(JsonObject().apply {
+        addProperty("v", 2); addProperty("pair_id", pair.pairId)
+        add("guardian", pair.guardian.descriptor); add("child", pair.child.descriptor)
+        add("offer", offer.deepCopy()); add("response", response.deepCopy()); add("confirmation", confirmation.deepCopy())
+    })
+    fun membershipBody(): ByteArray = StrictJson.canonical(JsonObject().apply {
+        addProperty("v", 2); addProperty("pair_id", pair.pairId); addProperty("transcript_sha256", sha256)
+    })
+}
+
 /** Direct scans only. No API accepts a server key directory as a trust source. */
 class PairingManager(
     private val local: PeerKeys,
@@ -129,6 +159,7 @@ class PairingManager(
             addProperty("pair_id", store.pairId); add("guardian", guardian.descriptor); add("child", child.descriptor)
             addProperty("transcript_sha256", StrictJson.sha(StrictJson.canonical(offer) +
                 StrictJson.canonical(response) + StrictJson.canonical(confirmation)))
+            add("offer", offer.deepCopy()); add("response", response.deepCopy()); add("confirmation", confirmation.deepCopy())
         }
         val pair = TrustedPair(store.pairId, guardian, child)
         store.put("trusted_pair", StrictJson.canonical(trust))
@@ -137,10 +168,36 @@ class PairingManager(
     }
 
     fun trusted(): TrustedPair? {
-        val bytes = store.get("trusted_pair") ?: return null
-        val obj = StrictJson.parse(bytes)
-        return TrustedPair(StrictJson.string(obj, "pair_id"), PeerKeys.parse(obj["guardian"].asJsonObject, codec),
-            PeerKeys.parse(obj["child"].asJsonObject, codec))
+        return retainedTranscript()?.pair
+    }
+
+    /** Revalidates the exact physically exchanged records every time before cloud registration. */
+    fun retainedTranscript(): RetainedPairTranscript? {
+        val obj = StrictJson.parse(store.get("trusted_pair") ?: return null)
+        StrictJson.exact(obj, "pair_id", "guardian", "child", "transcript_sha256", "offer", "response", "confirmation")
+        val pairId = StrictJson.uuid(StrictJson.string(obj, "pair_id")); StrictJson.ensure(pairId == store.pairId, "pair_mismatch")
+        val guardian = PeerKeys.parse(obj["guardian"].asJsonObject, codec); val child = PeerKeys.parse(obj["child"].asJsonObject, codec)
+        val offer = obj["offer"].asJsonObject; val response = obj["response"].asJsonObject; val confirmation = obj["confirmation"].asJsonObject
+        StrictJson.exact(offer, "v", "type", "pair_id", "nonce_b64", "expires_at_ms", "guardian", "signature_b64")
+        StrictJson.exact(response, "v", "type", "pair_id", "offer_sha256", "child", "signature_b64")
+        StrictJson.exact(confirmation, "v", "type", "pair_id", "offer_sha256", "response_sha256", "signature_b64")
+        StrictJson.ensure(StrictJson.string(offer, "type") == "pair_offer" && StrictJson.string(response, "type") == "pair_response" &&
+            StrictJson.string(confirmation, "type") == "pair_confirm" && listOf(offer, response, confirmation).all {
+                StrictJson.int(it, "v") == 2 && StrictJson.string(it, "pair_id") == pairId
+            }, "pair_mismatch")
+        codec.bounded(StrictJson.string(offer, "nonce_b64"), 32, 32); StrictJson.decimal(offer, "expires_at_ms", true)
+        StrictJson.ensure(StrictJson.canonical(PeerKeys.parse(offer["guardian"].asJsonObject, codec).descriptor)
+            .contentEquals(StrictJson.canonical(guardian.descriptor)) &&
+            StrictJson.canonical(PeerKeys.parse(response["child"].asJsonObject, codec).descriptor)
+                .contentEquals(StrictJson.canonical(child.descriptor)), "pair_mismatch")
+        verify(offer, guardian); verify(response, child); verify(confirmation, guardian)
+        val offerHash = StrictJson.sha(StrictJson.canonical(offer)); val responseHash = StrictJson.sha(StrictJson.canonical(response))
+        StrictJson.ensure(StrictJson.string(response, "offer_sha256") == offerHash &&
+            StrictJson.string(confirmation, "offer_sha256") == offerHash &&
+            StrictJson.string(confirmation, "response_sha256") == responseHash, "pair_mismatch")
+        val digest = StrictJson.sha(StrictJson.canonical(offer) + StrictJson.canonical(response) + StrictJson.canonical(confirmation))
+        StrictJson.ensure(StrictJson.hex(StrictJson.string(obj, "transcript_sha256")) == digest, "invalid_signature")
+        return RetainedPairTranscript(TrustedPair(pairId, guardian, child), offer.deepCopy(), response.deepCopy(), confirmation.deepCopy(), digest)
     }
 
     fun fingerprints(): Map<String, String> {

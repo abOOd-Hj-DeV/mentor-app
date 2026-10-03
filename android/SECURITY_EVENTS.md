@@ -1,6 +1,6 @@
 # Native security/events handoff
 
-Isolated `protection.security`/`protection.events` are implemented, not wired into MainActivity/LayoutService/Flutter. Only INTERNET, allowBackup=false, Tink/Gson and dependency verification/locking are wired. Existing model hashes and diagnostic-only transport are untouched. This is not a claim of production/full-system readiness.
+Isolated `protection.security`/`protection.events` and optional `protection.cloud` are implemented, not wired into MainActivity/LayoutService/Flutter. INTERNET, allowBackup=false, dependency verification/locking and the generic Firebase Messaging service are wired. Native cloud defaults to Unconfigured. Existing model hashes and diagnostic-only transport are untouched. This is not a claim of production/full-system readiness. See [native relay integration](NATIVE_RELAY.md).
 
 ## Compose authority, never trust Flutter role choice
 
@@ -22,7 +22,7 @@ Construct only typed IncidentMetadata from independently validated **actual** ex
 
 Typed sealControl requires guardian authentication; sealReceipt uses typed ControlReceipt. Sealing is not applying: child replay-safe control receiver, clock trust, direct-challenge consumption and actual policy/unlock/revoke execution remain integration work. No public free-form/media seal API is exposed.
 
-All synchronous disk/crypto primitives belong on a bounded worker queue, not UI/analysis/enforcement hot paths. Upload/storage failure must never stop local enforcement. Native HTTP/Firebase Auth/FCM, WorkManager/foreground recovery, camera QR UI, lifecycle invalidation and locked inbox UI need separate integration; no cloud service is deployed.
+All synchronous disk/crypto primitives belong on a bounded worker queue, not UI/analysis/enforcement hot paths. Upload/storage failure must never stop local enforcement. Optional Firebase Auth, exact-byte bounded HTTP, generic FCM and WorkManager/foreground recovery are implemented behind NativeRelayAdapter. The integrator must provide its Application/service factory, authoritative stores/bindings and lifecycle calls. Camera QR UI, lifecycle invalidation and locked inbox UI remain integration work; no cloud service is deployed.
 
 ## Validation limits
 
