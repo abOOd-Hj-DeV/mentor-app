@@ -31,7 +31,9 @@ object NativeRelayRuntime {
     }
 
     fun start(context: Context) {
-        if (RelayConfigurationLoader.load(context) == null) { installed?.relayState(RelayState.UNCONFIGURED); return }
+        val config = try { RelayConfigurationLoader.load(context) }
+        catch (_: Exception) { installed?.relayState(RelayState.ERROR, "relay_unconfigured"); return }
+        if (config == null) { installed?.relayState(RelayState.UNCONFIGURED); return }
         schedulePeriodic(context.applicationContext)
         requestSync(context.applicationContext)
     }
@@ -41,7 +43,9 @@ object NativeRelayRuntime {
     fun requestRevoke(context: Context) = request(context, "revoke")
 
     private fun request(context: Context, action: String) {
-        if (try { RelayConfigurationLoader.load(context.applicationContext) } catch (_: Exception) { null } == null) return
+        val config = try { RelayConfigurationLoader.load(context.applicationContext) }
+        catch (_: Exception) { installed?.relayState(RelayState.ERROR, "relay_unconfigured"); return }
+        if (config == null) { installed?.relayState(RelayState.UNCONFIGURED); return }
         val request = OneTimeWorkRequestBuilder<RelayWorker>()
             .setInputData(workDataOf("action" to action))
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -80,6 +84,8 @@ class RelayWorker(context: Context, params: WorkerParameters) : Worker(context, 
         val adapter = try { NativeRelayRuntime.adapter(applicationContext) } catch (_: Exception) { return Result.failure() }
             ?: return Result.failure()
         return try {
+            if (adapter.binding() == null) { adapter.relayState(RelayState.UNCONFIGURED); return Result.success() }
+            if (adapter.pairPhase() == RelayPairPhase.REVOKED) { adapter.relayState(RelayState.REVOKED); return Result.success() }
             val sync = NativeRelaySync(FirebaseRelayIdentity(applicationContext, config, adapter::appCheckToken),
                 FirebaseRelayPushToken(applicationContext, config), RelayHttpClient(config.relayUrl), adapter)
             if (inputData.getString("action") == "revoke") { sync.revoke(); Result.success() }
