@@ -236,9 +236,12 @@ class ProtectionControllerTest {
         val h = Harness()
         h.journal.finishBroken = true
         h.decide()
-        assertEquals("executed",h.replies.single().status)
+        // C++ rejects executed+error, so the truthful protocol status is failed with the real action.
+        assertEquals("failed",h.replies.single().status)
         assertEquals("storage_failed",h.replies.single().error)
         assertEquals(1,h.replies.single().stage)
+        assertEquals("cover_region",h.replies.single().action)
+        assertEquals(h.actions.attachedRects,h.replies.single().rects)
         assertEquals(1,h.controller.active!!.stage)
     }
     @Test fun journalFailureUnpairedClockOrWrongSessionNeverApply() {

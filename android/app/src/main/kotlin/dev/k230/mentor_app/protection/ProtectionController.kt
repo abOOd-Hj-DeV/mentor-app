@@ -14,6 +14,16 @@ internal fun protectionWire(active: ActiveProtection?) = mapOf(
     "covered_rects" to active?.masks.orEmpty().map { it.rect.wire() }, "release_pending" to false,
 )
 
+/** Canonical companion ACK shape: stage 0 carries no time or rectangles, only stage 1/2 report
+ * actual overlay rectangles, and a verified HOME reports stage 3 even while a shield persists. */
+internal fun ackWire(session: String, seq: String, d: DecisionCommand, r: ExecutionResult) = mapOf(
+    "v" to 2, "type" to "ack", "session_id" to session, "seq" to seq, "stream_id" to d.streamId,
+    "request_seq" to d.seq.toString(), "event_id" to d.eventId, "action_revision" to d.revision.toString(),
+    "status" to r.status, "requested_stage" to d.stage, "executed_stage" to r.stage,
+    "executed_action" to r.action, "executed_at_us" to r.executedUs?.toString(),
+    "screen_token" to d.screenToken, "display_rects" to r.rects.map { it.wire() }, "error" to r.error,
+)
+
 /** Main-thread state machine. Journal work is delegated off the main/socket reader threads. */
 internal class ProtectionController(
     private val now: () -> Long,
@@ -79,7 +89,8 @@ internal class ProtectionController(
                     JournalReservation.Conflict -> { reply(rejected("event_conflict")); settled() }
                     JournalReservation.Incomplete -> { reply(rejected("home_unverified")); settled() }
                     null -> { reply(rejected("storage_failed")); settled() }
-                    JournalReservation.New -> execute(d, port, journal, connectionGeneration, repeated, reply)
+                    JournalReservation.New, KnownNonexecutionRetry -> execute(d, port, journal,
+                        connectionGeneration, repeated, reservation == KnownNonexecutionRetry, reply)
                 }
             }
         }
@@ -88,24 +99,27 @@ internal class ProtectionController(
 
     private fun execute(
         d: DecisionCommand, port: GuardianSecurityDelegate, journal: ExecutionJournal,
-        connectionGeneration: Long, repeated: Boolean, reply: (ExecutionResult) -> Unit,
+        connectionGeneration: Long, repeated: Boolean, nonexecutionRetry: Boolean,
+        reply: (ExecutionResult) -> Unit,
     ) {
         fun complete(result: ExecutionResult) {
             error = result.error
             onChange()
             val queued = background {
                 var saved = true
-                try { journal.finish(d, result); port.recordExecution(d, result) }
+                // Durable incident metadata must precede the execution journal so a crash in between
+                // cannot leave an executed action without recoverable evidence.
+                try { port.recordExecution(d, result); journal.finish(d, result) }
                 catch (_: Exception) { saved = false }
                 main {
                     if (!saved) { error = "storage_failed"; onChange() }
-                    reply(if (saved) result else result.copy(error = "storage_failed"))
+                    reply(if (saved) result else result.copy(status = "failed", error = "storage_failed"))
                     settled()
                 }
             }
             if (!queued) {
                 error = "storage_failed"; onChange()
-                reply(result.copy(error = "storage_failed")); settled()
+                reply(result.copy(status = "failed", error = "storage_failed")); settled()
             }
         }
         try {
@@ -119,7 +133,7 @@ internal class ProtectionController(
             val old = active
             requireProtocol(old == null || old.eventId == d.eventId, "busy")
             requireProtocol(old == null || d.revision == old.revision + 1 && d.stage >= old.stage, "event_conflict")
-            requireProtocol(old != null || d.revision == 1L, "event_conflict")
+            requireProtocol(old != null || d.revision == 1L || nonexecutionRetry, "event_conflict")
             val s = screen()!!
             val union = if (d.stage == 1) {
                 coverRectUnion(old?.masks.orEmpty().map { it.rect }, mapped)
@@ -215,8 +229,8 @@ internal class ProtectionController(
         val port = security()
         if (!background {
             try {
-                port.journal()?.release(a.eventId, a.revision, now())
                 port.recordRelease(a.eventId, a.revision, reason)
+                port.journal()?.release(a.eventId, a.revision, now())
             } catch (_: Exception) { main { error = "storage_failed"; onChange() } }
         }) error = "storage_failed"
         onReleased?.invoke(a, reason)
@@ -226,8 +240,9 @@ internal class ProtectionController(
     private fun rejected(code: String) = actual("rejected", code)
     private fun actual(status: String, code: String? = null, home: Boolean = false): ExecutionResult {
         val a = active
-        return ExecutionResult(status, a?.stage ?: 0,
-            if (home) "home" else CompanionProtocol.actionFor(minOf(a?.stage ?: 0, 2)),
-            a?.appliedUs, a?.masks.orEmpty().map { it.rect }, code)
+        val stage = if (home) 3 else a?.stage ?: 0
+        return ExecutionResult(status, stage,
+            if (stage == 3) "home" else CompanionProtocol.actionFor(stage), a?.appliedUs,
+            if (stage == 1 || stage == 2) a?.masks.orEmpty().map { it.rect } else emptyList(), code)
     }
 }

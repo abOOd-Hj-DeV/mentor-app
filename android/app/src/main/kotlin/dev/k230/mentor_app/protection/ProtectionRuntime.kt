@@ -138,12 +138,7 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
     }
     private fun ack(id: String, d: DecisionCommand, r: ExecutionResult) {
         if (sessionId != id) return
-        socket.send(id, mapOf("v" to 2, "type" to "ack", "session_id" to id, "seq" to nextSeq(),
-            "stream_id" to d.streamId, "request_seq" to d.seq.toString(), "event_id" to d.eventId,
-            "action_revision" to d.revision.toString(), "status" to r.status, "requested_stage" to d.stage,
-            "executed_stage" to r.stage, "executed_action" to r.action,
-            "executed_at_us" to r.executedUs?.toString(), "screen_token" to d.screenToken,
-            "display_rects" to r.rects.map { it.wire() }, "error" to r.error))
+        socket.send(id, ackWire(id, nextSeq(), d, r))
     }
     private fun nextSeq() = (++outgoingSeq).toString()
     private fun hello(id: String) = mapOf("v" to 2, "type" to "hello", "session_id" to id,
