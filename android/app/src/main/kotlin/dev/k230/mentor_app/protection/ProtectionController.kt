@@ -115,9 +115,7 @@ internal class ProtectionController(
             requireProtocol(old != null || d.revision == 1L, "event_conflict")
             val s = screen()!!
             val union = if (d.stage == 1) {
-                val union = (old?.masks.orEmpty().map { it.rect } + mapped).distinct()
-                requireProtocol(union.size <= 8)
-                union
+                coverRectUnion(old?.masks.orEmpty().map { it.rect }, mapped)
             } else emptyList()
             val installed: (Result<List<PixelRect>>) -> Unit = { result ->
                 result.fold({ rects ->
@@ -173,6 +171,7 @@ internal class ProtectionController(
         val a = active ?: return
         if (a.stage == 3 && !launcher) return
         if (next.token == a.target.token || next.epoch <= a.target.epoch) return
+        if (next.packageName == a.target.packageName && next.windowId == a.target.windowId) return
         release("verified_navigation")
     }
 

@@ -23,10 +23,17 @@ internal interface ExecutionJournal {
 }
 
 internal interface ProtectionActions {
+    /** Install the complete cover set atomically; on failure retain all previously installed covers. */
     fun cover(rects: List<PixelRect>, screen: ScreenSnapshot, done: (Result<List<PixelRect>>) -> Unit)
     fun shield(screen: ScreenSnapshot, done: (Result<List<PixelRect>>) -> Unit)
     fun home(onVerified: (Boolean) -> Unit): Boolean
     fun clear()
+}
+
+internal fun coverRectUnion(existing: List<PixelRect>, added: List<PixelRect>): List<PixelRect> {
+    val complete = (existing + added).distinct()
+    requireProtocol(complete.size in 1..8)
+    return complete
 }
 
 internal enum class DeviceRole(val wire: String) { UNCONFIGURED("unconfigured"), GUARDIAN("guardian"), CHILD("child") }

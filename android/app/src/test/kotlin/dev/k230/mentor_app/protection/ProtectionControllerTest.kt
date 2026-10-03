@@ -36,6 +36,8 @@ class ProtectionControllerTest {
     }
     private class Actions : ProtectionActions {
         val calls = mutableListOf<String>()
+        val coverRequests = mutableListOf<List<PixelRect>>()
+        var attachedRects = emptyList<PixelRect>()
         var clearCount = 0
         var homeAccepted = true
         var homeVerified: Boolean? = true
@@ -44,10 +46,13 @@ class ProtectionControllerTest {
         override fun cover(rects: List<PixelRect>, screen: ScreenSnapshot,
             done: (Result<List<PixelRect>>) -> Unit) {
             calls.add("cover")
+            coverRequests.add(rects.toList())
+            if (!overlayFailed) attachedRects = rects.toList()
             done(if (overlayFailed) Result.failure(ProtocolFailure("action_failed")) else Result.success(rects))
         }
         override fun shield(screen: ScreenSnapshot, done: (Result<List<PixelRect>>) -> Unit) {
             calls.add("shield")
+            if (!overlayFailed) attachedRects = listOf(PixelRect(0,0,screen.width,screen.height))
             done(if (overlayFailed) Result.failure(ProtocolFailure("action_failed")) else
                 Result.success(listOf(PixelRect(0,0,screen.width,screen.height))))
         }
@@ -58,7 +63,7 @@ class ProtectionControllerTest {
             }
             return homeAccepted
         }
-        override fun clear() { clearCount++; calls.add("clear") }
+        override fun clear() { clearCount++; calls.add("clear"); attachedRects = emptyList() }
     }
     private class Harness {
         var now = 10_450_000L
@@ -277,18 +282,76 @@ class ProtectionControllerTest {
     @Test fun coverSubcommandsAccumulateUnionAndAppliedActionsDoNotDowngrade() {
         val h = Harness()
         h.decide()
-        val pts = listOf(10_000_000L,10_200_000,10_400_000)
-        val next = ProtocolFixtures.parse(ProtocolFixtures.decision(revision=2,
+        h.now += 500_000
+        h.screen = h.screen.copy(sampledUs=h.now)
+        val pts = listOf(10_500_000L,10_700_000,10_900_000)
+        val next = ProtocolFixtures.parse(ProtocolFixtures.decision(revision=2,pts=pts,
             regions=listOf(ProtocolFixtures.region(.65,.02,.1,pts,2,PixelRect(200,100,100,300)))))
+        val a = h.actions.attachedRects.single()
+        val aApplied = h.controller.active!!.masks.single().appliedUs
         h.decide(next)
-        assertEquals(2,h.controller.active!!.masks.size)
+        val complete = listOf(a,PixelRect(600,300,300,900))
+        assertEquals(complete,h.actions.coverRequests.last())
+        assertEquals(complete,h.actions.attachedRects)
+        assertEquals(complete,h.controller.active!!.masks.map { it.rect })
+        assertEquals(complete,h.replies.last().rects)
+        assertEquals("executed",h.replies.last().status)
+        assertEquals(2L,h.controller.active!!.revision)
+        assertEquals(aApplied,h.controller.active!!.masks.first().appliedUs)
+        assertEquals(h.now,h.controller.active!!.masks.last().appliedUs)
         h.decide(ProtocolFixtures.parse(ProtocolFixtures.decision(2,.85,.0,.0,revision=3)))
         assertEquals(2,h.controller.active!!.stage)
+        assertEquals(listOf(PixelRect(0,0,h.screen.width,h.screen.height)),h.actions.attachedRects)
+        assertEquals(h.actions.attachedRects,h.replies.last().rects)
         h.decide(ProtocolFixtures.parse(ProtocolFixtures.decision(revision=4)))
         assertEquals("event_conflict",h.replies.last().error)
         assertEquals(2,h.controller.active!!.stage)
     }
-    @Test fun onlyFreshVerifiedContentOrNavigationClearsTheProtectedTarget() {
+    @Test fun failedSecondRegionAttachmentPreservesFirstRegionAndActualAck() {
+        val h = Harness()
+        h.decide()
+        val prior = h.controller.active!!
+        val a = h.actions.attachedRects.single()
+        h.actions.overlayFailed = true
+        h.now += 500_000
+        h.screen = h.screen.copy(sampledUs=h.now)
+        val pts = listOf(10_500_000L,10_700_000,10_900_000)
+        h.decide(ProtocolFixtures.parse(ProtocolFixtures.decision(revision=2,pts=pts,
+            regions=listOf(ProtocolFixtures.region(.65,.02,.1,pts,2,PixelRect(200,100,100,300))))))
+        assertEquals(listOf(a,PixelRect(600,300,300,900)),h.actions.coverRequests.last())
+        assertEquals(listOf(a),h.actions.attachedRects)
+        assertEquals(prior,h.controller.active)
+        assertEquals("failed",h.replies.last().status)
+        assertEquals("action_failed",h.replies.last().error)
+        assertEquals(listOf(a),h.replies.last().rects)
+        assertEquals(1,h.replies.last().stage)
+        assertEquals(0,h.actions.clearCount)
+    }
+    @Test fun ninthDistinctCoverIsRejectedBeforeRenderingWithoutExposingTheFirstEight() {
+        val h = Harness()
+        val pts = listOf(10_000_000L,10_200_000,10_400_000)
+        val firstEight = (1..8).map { i ->
+            ProtocolFixtures.region(.65,.02,.1,pts,i.toLong(),PixelRect(i*20,100,10,10))
+        }
+        h.decide(ProtocolFixtures.parse(ProtocolFixtures.decision(regions=firstEight)))
+        assertEquals("executed",h.replies.last().status)
+        val installed = h.actions.attachedRects
+        assertEquals(8,installed.size)
+        h.now += 500_000
+        h.screen = h.screen.copy(sampledUs=h.now)
+        val addedPts = listOf(10_500_000L,10_700_000,10_900_000)
+        h.decide(ProtocolFixtures.parse(ProtocolFixtures.decision(revision=2,pts=addedPts,
+            regions=listOf(ProtocolFixtures.region(.65,.02,.1,addedPts,9,PixelRect(200,100,10,10))))))
+        assertEquals("rejected",h.replies.last().status)
+        assertEquals("bounds",h.replies.last().error)
+        assertEquals(1,h.actions.coverRequests.size)
+        assertEquals(installed,h.actions.attachedRects)
+        assertEquals(installed,h.controller.active!!.masks.map { it.rect })
+        assertEquals(installed,h.replies.last().rects)
+        assertEquals(1L,h.controller.active!!.revision)
+        assertEquals(installed,coverRectUnion(installed,installed))
+    }
+    @Test fun freshTokensAloneCannotReleaseTheProtectedUnderlyingScreen() {
         val h = Harness()
         h.decide()
         h.controller.verifiedNavigation(h.screen,false)
@@ -297,6 +360,9 @@ class ProtectionControllerTest {
             status="invalid"),false)
         assertEquals(0,h.actions.clearCount)
         h.controller.verifiedNavigation(h.screen.copy(token=ProtocolFixtures.CONTINUITY,epoch=2),false)
+        assertEquals(0,h.actions.clearCount)
+        h.controller.verifiedNavigation(h.screen.copy(token=ProtocolFixtures.CONTINUITY,epoch=2,
+            packageName="com.safe.other",windowId=9),false)
         assertEquals(1,h.actions.clearCount)
     }
 
@@ -332,7 +398,7 @@ class ProtectionControllerTest {
         }
     }
 
-    @Test fun sameAppContentTransitionShieldsDuringInvalidGapThenReleasesAfterStableFreshToken() {
+    @Test fun genericSameAppContentMutationKeepsShieldDespiteStableFreshToken() {
         val s = ScreenHarness()
         s.decide()
         val old = s.h.screen
@@ -353,8 +419,12 @@ class ProtectionControllerTest {
         assertTrue(s.h.screen.epoch > old.epoch)
         assertEquals(old.packageName,s.h.screen.packageName)
         assertEquals(old.windowId,s.h.screen.windowId)
-        assertEquals(1,s.h.actions.clearCount)
-        assertNull(s.h.controller.active)
+        assertEquals(0,s.h.actions.clearCount)
+        assertEquals(2,s.h.controller.active!!.stage)
+        assertEquals(listOf(PixelRect(0,0,old.width,old.height)),s.h.actions.attachedRects)
+        s.h.controller.verifiedNavigation(s.h.screen,false)
+        assertEquals(0,s.h.actions.clearCount)
+        assertEquals(2,s.h.controller.active!!.stage)
     }
 
     @Test fun ownOverlayUnattributedAndWrongWindowEventsNeverInvalidateOrRelease() {
