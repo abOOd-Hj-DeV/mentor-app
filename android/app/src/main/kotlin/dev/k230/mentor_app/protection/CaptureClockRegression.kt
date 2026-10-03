@@ -17,8 +17,9 @@ internal class CaptureClockRegression {
         val valid = capturePtsUs > 0 && receivedUs > 0 &&
             (if (capturePtsUs > receivedUs) capturePtsUs - receivedUs <= 50_000
                 else receivedUs - capturePtsUs <= 750_000) &&
-            (count == 0 || capturePtsUs > lastPts && receivedUs > lastReceive &&
-                receivedUs - firstReceive <= 3_000_000) && count < 8
+                (count == 0 || capturePtsUs > lastPts && receivedUs > lastReceive &&
+                    receivedUs - firstReceive <= 3_000_000 &&
+                    kotlin.math.abs((capturePtsUs - firstPts) - (receivedUs - firstReceive)) <= 100_000) && count < 8
         if (!valid) { reset(); throw ProtocolFailure("clock_unverified") }
         if (count == 0) { firstPts = capturePtsUs; firstReceive = receivedUs }
         count++; lastPts = capturePtsUs; lastReceive = receivedUs

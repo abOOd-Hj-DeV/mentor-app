@@ -114,11 +114,11 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
     fun interrupt() { tracker.invalidate(); changed() }
     fun refreshTrustedState() { tracker.invalidate(); changed() }
 
-    private fun command(id: String, cmd: CompanionCommand) {
+    private fun command(id: String, cmd: CompanionCommand, receivedUs: Long) {
         if (id != sessionId) return
         when (cmd) {
             is BindCommand -> {
-                val receiveUs = nowUs()
+                val receiveUs = receivedUs
                 val result = if (bound) ClockBindingReply("rejected", "busy") else captureClock.bind(cmd, receiveUs)
                 socket.send(id, mapOf("v" to 2, "type" to "bound", "session_id" to id,
                     "seq" to nextSeq(), "request_seq" to cmd.seq.toString(), "stream_id" to cmd.streamId,

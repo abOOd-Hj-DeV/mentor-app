@@ -11,6 +11,7 @@ import com.google.crypto.tink.HybridDecrypt
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import dev.k230.mentor_app.protection.events.*
+import dev.k230.mentor_app.protection.cloud.*
 import dev.k230.mentor_app.protection.security.*
 import dev.k230.mentor_app.protection.security.DeviceRole as StoredRole
 import dev.k230.mentor_app.protection.events.ControlOperation as SignedOperation
@@ -26,6 +27,7 @@ internal object NativeSecurityProvider {
             instance = it; ProtectionIntegration.security = it
             ProtectionIntegration.receiveProtectedControl = it::protectedControl
             it.initialize()
+            NativeRelayRuntime.install(context.applicationContext, it.relayAdapter)
         }
 }
 
@@ -56,12 +58,72 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
     private var outbox: EncryptedOutbox? = null
     private var incidents: IncidentRepository? = null
     private var inbox: EncryptedInbox? = null
+    private var relayStore: EncryptedRelayState? = null
+    @Volatile private var cloudHealth = "unconfigured"
     @Volatile private var current = SecurityState()
     @Volatile private var currentProfile: PolicyProfile? = null
     @Volatile private var executionJournal: ExecutionJournal? = null
     @Volatile private var authDeadline = 0L
     @Volatile private var storageError: String? = null
     private fun nowUs() = System.nanoTime() / 1000
+    private fun <T> relayCall(action: () -> T): T {
+        requireProtocol(Looper.myLooper() != Looper.getMainLooper(), "busy")
+        val task = java.util.concurrent.FutureTask<T> {
+            bootstrap()
+            if (auth!!.role == StoredRole.GUARDIAN) auth!!.requireGuardian()
+            action().also { refresh() }
+        }
+        try {
+            worker.execute(task)
+            return task.get(35, TimeUnit.SECONDS)
+        } catch (e: java.util.concurrent.ExecutionException) {
+            throw (e.cause as? Exception ?: SecurityFailure("storage_failed"))
+        } catch (_: java.util.concurrent.TimeoutException) {
+            task.cancel(false); throw SecurityFailure("busy")
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            throw SecurityFailure("busy")
+        } finally { main.post { ProtectionIntegration.onDisplayStateChanged?.invoke() } }
+    }
+    val relayAdapter: NativeRelayAdapter = object : NativeRelayAdapter {
+        override fun binding(): RelayBinding? = relayCall {
+            val transcript = pairing?.retainedTranscript() ?: return@relayCall null
+            if (controls?.revoked() == true || transcript.pair.guardian.authUid == null || transcript.pair.child.authUid == null)
+                return@relayCall null
+            val peer = local ?: throw SecurityFailure("unpaired")
+            val pinned = if (auth!!.role == StoredRole.GUARDIAN) transcript.pair.guardian else transcript.pair.child
+            requireProtocol(StrictJson.canonical(peer.descriptor).contentEquals(StrictJson.canonical(pinned.descriptor)), "pair_mismatch")
+            RelayBinding(transcript.pair, peer.deviceId, transcript)
+        }
+        override fun pending(nowMs: Long, limit: Int) = relayCall { outbox!!.readyEntries(nowMs, limit) }
+        override fun acknowledge(ack: RelayAcknowledgment) = relayCall {
+            if (current.role == DeviceRole.CHILD) incidents!!.acknowledgeMessage(ack.messageId, ack.status, ack.sha256)
+            else outbox!!.acknowledge(ack.messageId, ack.status, ack.sha256)
+        }
+        override fun failedAttempt(messageId: String, nowMs: Long) = relayCall { outbox!!.failedAttempt(messageId, nowMs) }
+        override fun receiveEnvelope(canonicalEnvelope: ByteArray) = relayCall {
+            val pair = pairing!!.trusted() ?: throw SecurityFailure("unpaired")
+            val envelope = IncidentCrypto().validateEnvelope(canonicalEnvelope, pair)
+            when (StrictJson.string(envelope, "kind")) {
+                "incident" -> { requireProtocol(current.role == DeviceRole.GUARDIAN, "guardian_only"); inbox!!.receive(canonicalEnvelope); Unit }
+                "control" -> receiveControl(canonicalEnvelope)
+                "control_receipt" -> receiveReceipt(canonicalEnvelope)
+                else -> throw SecurityFailure("invalid_envelope")
+            }
+        }
+        override fun cursor() = relayCall { relayStore!!.cursor() }
+        override fun storeCursor(cursor: String?) = relayCall { relayStore!!.storeCursor(cursor) }
+        override fun pairPhase() = relayCall { relayStore!!.pairPhase() }
+        override fun storePairPhase(phase: RelayPairPhase) = relayCall { relayStore!!.storePairPhase(phase) }
+        override fun relayState(state: RelayState, fixedError: String?) {
+            cloudHealth = when (state) {
+                RelayState.UNCONFIGURED, RelayState.REVOKED -> "unconfigured"
+                RelayState.ACTIVE -> "online"
+                RelayState.ACTIVE_WITHOUT_PUSH, RelayState.AUTHENTICATING, RelayState.PAIR_PENDING, RelayState.BACKOFF -> "offline"
+                RelayState.ERROR -> if (fixedError in setOf("identity_mismatch", "unauthenticated", "relay_unconfigured")) "auth_error" else "offline"
+            }
+            main.post { ProtectionIntegration.onDisplayStateChanged?.invoke() }
+        }
+    }
     private fun store(namespace: String, id: String, keys: CryptoKeyStore) = SealedStore(
         PrivateAtomicStore(context, namespace), keys.wrappingAead(), id, namespace)
     private fun submit(reply: ((SecurityReply) -> Unit)? = null, action: () -> Any?) {
@@ -97,6 +159,9 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
     }
     private fun loadPair(id: String, deviceId: String, provision: Boolean) {
         val role = auth!!.role
+        val provisionUid = if (provision) RelayConfigurationLoader.load(context)?.let {
+            FirebaseRelayIdentity(context, it).credentials(false).uid
+        } else null
         val keys = CryptoKeyStore(context, if (role == StoredRole.GUARDIAN) CryptoKeyStore.Role.GUARDIAN else CryptoKeyStore.Role.CHILD)
         if (provision && !keys.exists()) keys.provision()
         requireProtocol(keys.exists(), "key_lost")
@@ -106,11 +171,16 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
             ps.put("hpke", CryptoKeyStore.wrapHpke(it, keys.wrappingAead(), id))
         } else CryptoKeyStore.readHpke(wrapped ?: throw SecurityFailure("key_lost"), keys.wrappingAead(), id)
         val publicHpke = CryptoKeyStore.publicHpke(hpke); val signing = keys.signingSpki()
+        val persistedPeer = ps.get("local_peer")?.let { PeerKeys.parse(StrictJson.parse(it)) }
+        val uid = persistedPeer?.authUid ?: if (persistedPeer == null) provisionUid else null
         val peer = PeerKeys.parse(JsonObject().apply {
-            addProperty("device_id", deviceId); add("auth_uid", null)
+            addProperty("device_id", deviceId); addProperty("auth_uid", uid)
             addProperty("hpke_public_keyset_b64", AndroidBase64.encode(publicHpke)); addProperty("hpke_kid", StrictJson.sha(publicHpke))
             addProperty("signing_public_spki_b64", AndroidBase64.encode(signing)); addProperty("signing_kid", StrictJson.sha(signing))
         })
+        if (persistedPeer != null) requireProtocol(StrictJson.canonical(peer.descriptor)
+            .contentEquals(StrictJson.canonical(persistedPeer.descriptor)), "key_lost")
+        else ps.put("local_peer", StrictJson.canonical(peer.descriptor))
         roleKeys = keys; pairStore = ps; local = peer
         pairing = PairingManager(peer, keys.signer(), ps, boot, ::nowUs, System::currentTimeMillis)
         authority!!.put("local_pair", StrictJson.json(JsonObject().apply {
@@ -130,11 +200,13 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
         controls = DirectControls(controlStore, pair, keys.signer(), boot, ::nowUs,
             { ProtectionIntegration.activeEvent() }, grant = ::grantProtection)
         outbox = EncryptedOutbox(store("outbox", pair.pairId, keys), pair, crypto) { controls?.revoked() == false }
+        relayStore = EncryptedRelayState(store("cloud_state", pair.pairId, keys))
         if (auth!!.role == StoredRole.CHILD) {
             executionJournal = SealedExecutionJournal(store("execution", pair.pairId, keys), ::nowUs, boot)
             incidents = IncidentRepository(store("incidents", pair.pairId, keys), outbox!!, pair, crypto, keys.signer())
         } else inbox = EncryptedInbox(store("inbox", pair.pairId, keys), pair, crypto, auth!!, ::decryptor)
         refresh()
+        NativeRelayRuntime.requestSync(context)
     }
     private fun refresh() {
         val role = auth?.role ?: StoredRole.UNCONFIGURED
@@ -144,7 +216,7 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
         }
         current = SecurityState(DeviceRole.valueOf(role.name), role == StoredRole.GUARDIAN && auth!!.authenticated,
             pairing = if (controls?.revoked() == true) "revoked" else if (trusted != null) "paired"
-                else if (pairing != null) "pending" else "unpaired", encryption = "ready", cloud = "unconfigured",
+                else if (pairing != null) "pending" else "unpaired", encryption = "ready", cloud = cloudHealth,
             outboxCount = outbox?.size() ?: 0)
         storageError = null
     }
@@ -152,13 +224,15 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
         val locked = context.getSystemService(KeyguardManager::class.java).isDeviceLocked
         return current.copy(guardianAuthenticated = current.role == DeviceRole.GUARDIAN &&
             !locked && android.os.SystemClock.elapsedRealtime() < authDeadline,
+            cloud = cloudHealth,
             encryption = if (locked) "locked" else if (storageError != null) "failed" else current.encryption)
     }
     override fun profile() = currentProfile
     override fun journal() = executionJournal
     fun attach(host: Activity) {
-        activity = host; credential = AndroidCredentialPrompt(host); scanner = NativeQr(host); initialize()
+        activity = host; credential = AndroidCredentialPrompt(host); scanner = NativeQr(host); foreground()
     }
+    fun foreground() { initialize(); NativeRelayRuntime.foreground(context) }
     fun detach(host: Activity) {
         if (activity !== host) return
         onBackground(); scanner?.cancel(); activity = null; credential = null; scanner = null
@@ -173,6 +247,7 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
                 if (!ok) reply(SecurityReply.Error("guardian_auth_required"))
                 else submit(reply) {
                     bootstrap()
+                    NativeRelayRuntime.requestSync(context)
                     if (continuation != null) continuation() else mapOf("authenticated" to true,
                         "expiresAtMs" to (System.currentTimeMillis() + maxOf(0, expires!! - android.os.SystemClock.elapsedRealtime())).toString())
                 }
@@ -249,7 +324,11 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
                     mapOf("items" to inbox?.list(request.limit)?.map { native(it) }.orEmpty(), "nextCursor" to null)
                 }
                 is SecurityRequest.GetIncident -> native(inbox?.get(request.eventId) ?: throw SecurityFailure("unavailable"))
-                SecurityRequest.SyncInbox -> throw SecurityFailure("cloud_unconfigured")
+                SecurityRequest.SyncInbox -> {
+                    auth!!.requireGuardian()
+                    requireProtocol(RelayConfigurationLoader.load(context) != null, "cloud_unconfigured")
+                    NativeRelayRuntime.requestSync(context); mapOf("scheduled" to true)
+                }
                 else -> throw SecurityFailure("unavailable")
             }
         }
@@ -289,23 +368,31 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
                 if (StrictJson.string(challenge, "operation") == "unlock") createControl(ControlOperation.UNLOCK, null)
             }
             QrStep.CONTROL -> receiveControl(bytes)
-            QrStep.RECEIPT -> {
-                auth!!.requireGuardian()
-                val pair = pairing!!.trusted() ?: throw SecurityFailure("unpaired")
-                val payload = IncidentCrypto().open(bytes, pair, pair.guardian.deviceId, ::decryptor)
-                requireProtocol(payload.kind == "control_receipt")
-                val pending = pairStore!!.get("pending_control")?.let(StrictJson::parse) ?: throw SecurityFailure("stale")
-                val r = payload.plaintext
-                requireProtocol(r["command_id"] == pending["command_id"] && r["control_revision"] == pending["control_revision"], "stale")
-                if (StrictJson.string(r, "status") == "applied") {
-                    if (pending["operation"].asString == "set_profile") pairStore!!.put("confirmed_profile", StrictJson.json(JsonObject().apply {
-                        add("age", pending["profile"].asJsonObject["age"]); add("revision", r["policy_revision"])
-                    }))
-                    pairStore!!.delete("pending_control")
-                }
-            }
+            QrStep.RECEIPT -> receiveReceipt(bytes)
         }
         return null
+    }
+    private fun receiveReceipt(bytes: ByteArray) {
+        auth!!.requireGuardian()
+        val pair = pairing!!.trusted() ?: throw SecurityFailure("unpaired")
+        val payload = IncidentCrypto().open(bytes, pair, pair.guardian.deviceId, ::decryptor)
+        requireProtocol(payload.kind == "control_receipt")
+        val r = payload.plaintext
+        val key = "receipt_${StrictJson.uuid(StrictJson.string(r, "command_id"))}"
+        val stored = pairStore!!.get(key)?.let(StrictJson::parse)
+        if (stored != null) requireProtocol(stored == r, "event_conflict")
+        val pending = pairStore!!.get("pending_control")?.let(StrictJson::parse)
+        if (pending == null || r["command_id"] != pending["command_id"] || r["control_revision"] != pending["control_revision"]) {
+            requireProtocol(stored != null, "stale"); return
+        }
+        pairStore!!.put(key, StrictJson.canonical(r))
+        if (StrictJson.string(r, "status") == "applied") {
+            if (pending["operation"].asString == "set_profile") pairStore!!.put("confirmed_profile", StrictJson.json(JsonObject().apply {
+                add("age", pending["profile"].asJsonObject["age"]); add("revision", r["policy_revision"])
+            }))
+            if (pending["operation"].asString == "revoke_pair") NativeRelayRuntime.requestRevoke(context)
+            pairStore!!.delete("pending_control")
+        }
     }
     private fun createControl(operation: ControlOperation, age: Int?): Any? {
         auth!!.requireGuardian()
@@ -329,6 +416,7 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
             val sealed = IncidentCrypto().seal("control", control, pair, roleKeys!!.signer())
             requireProtocol(sealed.size <= 2953)
             ps.put("qr_control", sealed); outbox!!.enqueue(sealed)
+            NativeRelayRuntime.requestSync(context)
         }
         if (operation != ControlOperation.SET_PROFILE) return qr(ps.get("qr_control")!!)
         val policy = PolicyProfile(age!!, (currentProfile?.revision ?: 0) + 1)
@@ -351,6 +439,7 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
             }
         pairStore!!.put("qr_receipt", envelope)
         if (!controls!!.revoked()) outbox!!.enqueue(envelope)
+        NativeRelayRuntime.requestSync(context)
         main.post { dev.k230.mentor_app.LayoutService.instance?.protection?.refreshTrustedState() }
     }
     fun protectedControl(bytes: ByteArray, reply: (SecurityReply) -> Unit) = submit(reply) {
@@ -381,10 +470,15 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
                 ProtectionAction.entries.first { it.stage == decision.stage },
                 dev.k230.mentor_app.protection.events.ExecutionResult(ProtectionAction.entries.first { it.stage == result.stage },
                     ExecutionStatus.entries.first { it.wire == result.status }, result.error), decision.policy.revision)
-            repository.record(metadata); null
+            repository.record(metadata); NativeRelayRuntime.requestSync(context); null
         }
     }
-    override fun recordRelease(eventId: String, revision: Long, reason: String) = Unit
+    override fun recordRelease(eventId: String, revision: Long, reason: String) {
+        submit {
+            if (controls?.revoked() == false) incidents?.recordRelease(eventId, revision)
+            NativeRelayRuntime.requestSync(context); null
+        }
+    }
     private fun profileWire(p: PolicyProfile) = mapOf("age" to p.age, "profile" to p.profile,
         "policyVersion" to PolicyProfile.POLICY_VERSION, "policyRevision" to p.revision.toString())
     private fun native(o: com.google.gson.JsonElement): Any? = when {

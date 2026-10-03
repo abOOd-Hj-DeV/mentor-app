@@ -15,16 +15,20 @@ class IncidentRepository(private val journal: SealedStore, private val outbox: E
                          private val signer: EnvelopeSigner, private val wallMs: () -> Long = System::currentTimeMillis) {
     /** Run off the enforcement/UI threads. Persist before crypto/network, retry recovery is idempotent. */
     @Synchronized fun record(metadata: IncidentMetadata): OutboxEntry {
-        val plaintext = metadata.toJson()
-        StrictJson.ensure(metadata.childDeviceId == pair.child.deviceId, "pair_mismatch")
-        val key = "i_${StrictJson.uuid(metadata.eventId)}"
+        return recordJson(metadata.toJson())
+    }
+    private fun recordJson(plaintext: JsonObject): OutboxEntry {
+        PayloadValidation.incident(plaintext)
+        StrictJson.ensure(StrictJson.string(plaintext, "child_device_id") == pair.child.deviceId, "pair_mismatch")
+        val revision = StrictJson.decimal(plaintext, "incident_revision", true)
+        val key = "i_${StrictJson.uuid(StrictJson.string(plaintext, "event_id"))}"
         val existing = journal.get(key)?.let { StrictJson.parse(it) }
         val messageId: String
         if (existing != null) {
             val old = existing["metadata"].asJsonObject
             val oldRevision = StrictJson.decimal(old, "incident_revision", true)
-            StrictJson.ensure(metadata.revision >= oldRevision, "stale")
-            if (metadata.revision == oldRevision) {
+            StrictJson.ensure(revision >= oldRevision, "stale")
+            if (revision == oldRevision) {
                 StrictJson.ensure(old == plaintext, "event_conflict")
                 messageId = StrictJson.string(existing, "message_id")
                 val persisted = outbox.get(messageId)
@@ -42,6 +46,28 @@ class IncidentRepository(private val journal: SealedStore, private val outbox: E
         journal.put(key, StrictJson.json(pending))
         val bytes = crypto.seal("incident", plaintext, pair, signer, messageId)
         return outbox.enqueue(bytes)
+    }
+    @Synchronized fun recordRelease(eventId: String, actionRevision: Long): OutboxEntry? {
+        val old = journal.get("i_${StrictJson.uuid(eventId)}")?.let(StrictJson::parse) ?: return null
+        val payload = old["metadata"].asJsonObject.deepCopy()
+        if (payload["executed"].asJsonObject["status"].asString == "released") return null
+        payload.addProperty("incident_revision", Math.addExact(maxOf(actionRevision,
+            StrictJson.decimal(payload, "incident_revision", true)), 1).toString())
+        payload.addProperty("occurred_at_ms", wallMs().toString())
+        payload.add("executed", JsonObject().apply {
+            addProperty("action", "none"); addProperty("stage", 0); addProperty("status", "released"); add("error", null)
+        })
+        return recordJson(payload)
+    }
+    @Synchronized fun acknowledgeMessage(messageId: String, status: String, sha256: String) {
+        StrictJson.uuid(messageId)
+        val event = journal.names().filter { it.startsWith("i_") }.firstOrNull {
+            val record = StrictJson.parse(journal.get(it) ?: throw dev.k230.mentor_app.protection.security.SecurityFailure("storage_failed"))
+            StrictJson.string(record, "message_id") == messageId
+        }
+        if (event == null) outbox.acknowledge(messageId, status, sha256)
+        else acknowledge(event.removePrefix("i_"), messageId, status, sha256)
+        pruneUploaded()
     }
 
     @Synchronized fun acknowledge(eventId: String, messageId: String, status: String, sha256: String) {

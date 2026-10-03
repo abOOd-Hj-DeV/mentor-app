@@ -232,6 +232,15 @@ class SecurityEventsTest {
         active = false; rejected { outbox.entries() }
         active = true; repo.acknowledge(metadata(child.peer.deviceId).eventId, item.messageId, "duplicate", item.sha256)
         assertNull(outbox.get(item.messageId))
+        val released = repo.recordRelease(metadata(child.peer.deviceId).eventId, 2)!!
+        val payload = crypto.open(released.envelope, pair, guardian.peer.deviceId) { guardian.hpke.getPrimitive(HybridDecrypt::class.java) }.plaintext
+        assertEquals("released", payload["executed"].asJsonObject["status"].asString)
+        assertEquals("3", payload["incident_revision"].asString)
+        assertNull(repo.recordRelease(metadata(child.peer.deviceId).eventId, 2))
+        rejected { repo.acknowledgeMessage(released.messageId, "stored", "a".repeat(64)) }
+        assertNotNull(outbox.get(released.messageId))
+        repo.acknowledgeMessage(released.messageId, "stored", released.sha256)
+        assertNull(outbox.get(released.messageId))
     }
 
     @Test fun encryptedRelayStateSurvivesRestartWithoutExposingCursorAndCorruptionFailsClosed() {
