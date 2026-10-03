@@ -79,8 +79,8 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
                 "new_screen_token" to tracker.snapshot?.takeIf {
                     it.status == "verified" && it.token != active.target.token }?.token))
         }
-        ProtectionIntegration.guardianRelease = { eventId ->
-            handler.post { if (!closed) controller.guardianGrant(eventId) }
+        ProtectionIntegration.guardianRelease = { eventId, deadlineUs, done ->
+            handler.post { done(!closed && nowUs() <= deadlineUs && controller.confirmedGuardianGrant(eventId)) }
         }
     }
 

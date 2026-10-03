@@ -41,7 +41,7 @@ class NativeCompositionTest {
         val signer: EnvelopeSigner) {
         var now = 10_000_000L
         var active: String? = ProtocolFixtures.EVENT
-        val receiver = DirectControls(store, pair, signer, ProtocolFixtures.CONTINUITY, { now }, { active }, codec)
+        val receiver = DirectControls(store, pair, signer, ProtocolFixtures.CONTINUITY, { now }, { active }, codec) { it == active }
         fun control(op: ControlOperation, rev: Long, age: Int? = null): JsonObject {
             val bytes = receiver.challenge(op, if (op == ControlOperation.UNLOCK) active else null)
             val c = DirectControls.verifyChallenge(bytes, pair, codec)
@@ -103,6 +103,14 @@ class NativeCompositionTest {
         assertEquals(ProtocolFixtures.EVENT, f.active)
         assertEquals(f.receiver.apply(c), f.receiver.apply(c))
         assertThrows(Exception::class.java) { f.receiver.challenge(ControlOperation.UNLOCK, f.active) }
+    }
+    @Test fun missingRuntimeCannotPretendUnlockAppliedAndChallengeIsStillOneUse() {
+        val f = fixture(); val control = f.control(ControlOperation.UNLOCK, 1)
+        val unavailable = DirectControls(f.store, f.pair, f.signer, ProtocolFixtures.CONTINUITY, { f.now }, { f.active }, codec)
+        val result = unavailable.apply(control)
+        assertFalse(result.applied); assertEquals("action_failed", result.error)
+        assertEquals(result, unavailable.apply(control))
+        assertEquals(result, f.receiver.apply(control))
     }
     @Test fun journalCachesAllRevisionsAndResultsButNeverRestoresRepetitionAuthority() {
         var now = 10_500_000L; val store = store()

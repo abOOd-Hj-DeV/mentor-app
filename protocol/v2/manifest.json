@@ -7,7 +7,7 @@
     "fixtures/contracts.json": "4cad0e77c5c56d1a9dbd60c23b2118610cd81ac237391efdc85743f855fd30eb",
     "fixtures/signature-canonical.json": "79a97a2268092cbada52e98a776dd539f4167e691a67ddc384f0e3005f87996f",
     "incident.schema.json": "ac1656ab5c2c7e81c4765629c805d51c9e42963fb1f254b219defe7c55fca450",
-    "native-display.schema.json": "2de13bb5feae1d54fb816f546e89cd01ddb835ad447cfdb71e9f2baa8c8f4b8c",
+    "native-display.schema.json": "78a7e00d92967b14f67467abe940fb3dba499023b029ff64f1dbfdeb0b332427",
     "native-events.schema.json": "002878cd9149ddb784dd023079ac32fb5c56d83c8735f35eb5da172d7267e432",
     "pairing.schema.json": "ccaf13bcfbf1aa256e7cfc833573044398a6112b15a70cab08caabd8a0ff499b",
     "peer.schema.json": "21f756073656c40d881e94d623198b1a54743be79aa625c9ec5a4c648d94e4ae"

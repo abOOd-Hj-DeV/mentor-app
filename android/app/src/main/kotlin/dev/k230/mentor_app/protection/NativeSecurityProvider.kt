@@ -127,7 +127,8 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
         val pair = pairing?.trusted() ?: return
         val keys = roleKeys!!; val crypto = IncidentCrypto()
         val controlStore = store("controls", pair.pairId, keys)
-        controls = DirectControls(controlStore, pair, keys.signer(), boot, ::nowUs, { ProtectionIntegration.activeEvent() })
+        controls = DirectControls(controlStore, pair, keys.signer(), boot, ::nowUs,
+            { ProtectionIntegration.activeEvent() }, grant = ::grantProtection)
         outbox = EncryptedOutbox(store("outbox", pair.pairId, keys), pair, crypto) { controls?.revoked() == false }
         if (auth!!.role == StoredRole.CHILD) {
             executionJournal = SealedExecutionJournal(store("execution", pair.pairId, keys), ::nowUs, boot)
@@ -350,14 +351,17 @@ internal class NativeSecurityDelegate(private val context: Context) : GuardianSe
             }
         pairStore!!.put("qr_receipt", envelope)
         if (!controls!!.revoked()) outbox!!.enqueue(envelope)
-        if (payload.plaintext["operation"].asString == "unlock") {
-            val event = payload.plaintext["grant"].asJsonObject["event_id"].asString
-            main.post { ProtectionIntegration.guardianRelease?.invoke(event) }
-        }
         main.post { dev.k230.mentor_app.LayoutService.instance?.protection?.refreshTrustedState() }
     }
     fun protectedControl(bytes: ByteArray, reply: (SecurityReply) -> Unit) = submit(reply) {
         bootstrap(); requireProtocol(bytes.size in 1..2953); receiveControl(bytes); null
+    }
+    private fun grantProtection(eventId: String): Boolean {
+        val done = java.util.concurrent.CountDownLatch(1)
+        val released = java.util.concurrent.atomic.AtomicBoolean(false)
+        val receive = ProtectionIntegration.guardianRelease ?: return false
+        receive(eventId, nowUs() + 4_500_000) { released.set(it); done.countDown() }
+        return done.await(5, TimeUnit.SECONDS) && released.get()
     }
     override fun onBackground() {
         authDeadline = 0
