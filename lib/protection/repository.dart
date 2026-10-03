@@ -202,6 +202,8 @@ class PlatformProtectionRepository implements ProtectionRepository {
 }
 
 String errorMessage(String? code) => switch (code) {
+  'permission_missing' =>
+    'خدمة إمكانية الوصول غير مفعّلة على هذا الجهاز؛ لا يمكن تأكيد الحماية المحلية.',
   'clock_unverified' =>
     'التحليل الحي غير مفعّل: لم يُتحقق من توافق ساعة الالتقاط على هذا الجهاز. يلزم اختبار PTS عملي قبل تفعيل التنفيذ.',
   'challenge_required' =>

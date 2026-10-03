@@ -155,7 +155,7 @@ class HealthPage extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 Text(
-                  'الفئة ${state.profile!.label} · مراجعة ${state.profile!.revision}',
+                  'الفئة ${state.profile!.displayLabel} · مراجعة ${state.profile!.revision}',
                 ),
               ],
             ),

@@ -130,6 +130,24 @@ void main() {
       expect(controller.guardianUnlocked, isFalse);
     },
   );
+  test(
+    'guardian can authenticate again after lock and credential backgrounding',
+    () async {
+      await controller.start();
+      await controller.authenticate();
+      controller.lock();
+      repository.authenticationCompleter = Completer<DateTime?>();
+      final pending = controller.authenticate();
+      controller.suspend();
+      repository.emit(stateData(authenticated: false));
+      repository.data = stateData(authenticated: true);
+      repository.authenticationCompleter!.complete(repository.authExpiry);
+      await pending;
+      expect(controller.guardianUnlocked, isFalse);
+      await controller.resume();
+      expect(controller.guardianUnlocked, isTrue);
+    },
+  );
   test('native auth revocation discards late signed control QR', () async {
     await controller.start();
     await controller.authenticate();

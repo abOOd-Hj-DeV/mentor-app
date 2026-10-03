@@ -60,7 +60,8 @@ class ProtectionController extends ChangeNotifier {
     final previousRole = state?.role;
     final revoked =
         (state?.guardianAuthenticated == true &&
-            !value.guardianAuthenticated) ||
+            !value.guardianAuthenticated &&
+            _authExpiry != null) ||
         (previousRole == 'guardian' && value.role != 'guardian') ||
         (previousRole != 'child' && value.role == 'child');
     state = value;
@@ -166,6 +167,7 @@ class ProtectionController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    lock(preserveAuthenticationAttempt: true);
     final expiry = await _run(
       repository.guardianAuthenticate,
       authenticationAttempt: ++_authenticationAttempt,

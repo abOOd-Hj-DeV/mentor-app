@@ -74,6 +74,7 @@ class AgeProfile {
   final int age;
   final String revision;
   String get label => age <= 12 ? '10-12' : '13-15';
+  String get displayLabel => '\u2066$label\u2069';
   double get cover => age <= 12 ? .60 : .70;
   double get shield => age <= 12 ? .80 : .85;
   double get exit => age <= 12 ? .90 : .95;

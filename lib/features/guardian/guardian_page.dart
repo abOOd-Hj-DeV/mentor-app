@@ -70,7 +70,7 @@ class _GuardianPageState extends State<GuardianPage> {
               Text(
                 controller.state?.profile == null
                     ? 'لا يوجد ملف مؤكّد بعد'
-                    : 'آخر ملف مؤكّد: ${controller.state!.profile!.age} عاماً · ${controller.state!.profile!.label}',
+                    : 'آخر ملف مؤكّد: ${controller.state!.profile!.age} عاماً · ${controller.state!.profile!.displayLabel}',
               ),
               const SizedBox(height: 20),
               DropdownButtonFormField<int>(
@@ -88,7 +88,10 @@ class _GuardianPageState extends State<GuardianPage> {
               ),
               if (preview != null) ...[
                 const SizedBox(height: 16),
-                StatusPill('معاينة الفئة ${preview.label}'),
+                StatusPill(
+                  'معاينة الفئة ${preview.label}',
+                  textDirection: TextDirection.ltr,
+                ),
                 const SizedBox(height: 8),
                 Text(
                   'تغطية ${(preview.cover * 100).round()}٪ · حاجب ${(preview.shield * 100).round()}٪ · انتقال ${(preview.exit * 100).round()}٪',

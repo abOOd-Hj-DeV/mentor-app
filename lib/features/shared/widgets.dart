@@ -50,9 +50,15 @@ class PageHeading extends StatelessWidget {
 }
 
 class StatusPill extends StatelessWidget {
-  const StatusPill(this.text, {super.key, this.ready = false});
+  const StatusPill(
+    this.text, {
+    super.key,
+    this.ready = false,
+    this.textDirection,
+  });
   final String text;
   final bool ready;
+  final TextDirection? textDirection;
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -62,6 +68,7 @@ class StatusPill extends StatelessWidget {
     ),
     child: Text(
       text,
+      textDirection: textDirection,
       style: TextStyle(
         color: ready ? teal : caution,
         fontWeight: FontWeight.w700,
