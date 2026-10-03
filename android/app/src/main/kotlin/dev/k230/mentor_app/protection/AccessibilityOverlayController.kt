@@ -24,8 +24,13 @@ internal class AccessibilityOverlayController(
     private var transaction = 0L
     private var suspended = false
 
-    fun cover(rects: List<PixelRect>, screen: ScreenSnapshot, done: (Result<List<PixelRect>>) -> Unit) =
-        attach(rects, screen, false, done)
+    fun cover(rects: List<PixelRect>, screen: ScreenSnapshot, done: (Result<List<PixelRect>>) -> Unit) {
+        val complete = try {
+            requireProtocol(installed.none { it.shield }, "event_conflict")
+            coverRectUnion(installed.map { it.rect }, rects)
+        } catch (e: ProtocolFailure) { done(Result.failure(e)); return }
+        attach(complete, screen, false, done)
+    }
     fun shield(screen: ScreenSnapshot, done: (Result<List<PixelRect>>) -> Unit) =
         attach(listOf(PixelRect(0, 0, screen.width, screen.height)), screen, true, done)
 

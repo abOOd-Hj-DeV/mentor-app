@@ -5,7 +5,7 @@ import java.util.UUID
 internal data class ScreenIdentity(val width: Int, val height: Int, val rotation: Int,
     val windowId: Int, val packageName: String)
 
-/** A fresh token represents a stable, attributed content transition, never classifier Safe. */
+/** Same-window media identity proof is unavailable: generic mutations rotate scope, not release authority. */
 internal class ForegroundScreenState(
     private val ownPackage: String,
     private val now: () -> Long,
@@ -19,17 +19,15 @@ internal class ForegroundScreenState(
     private var candidateSince = 0L
     private var epoch = 1L
     private var pending = true
-    private var contentTransition = false
 
     fun contentEvent(packageName: String?, windowId: Int, applicationWindow: Boolean) {
         val underlying = identity ?: return
         if (packageName == ownPackage || !applicationWindow || packageName != underlying.packageName ||
             windowId != underlying.windowId) return
-        invalidate(contentChanged = true)
+        invalidate()
     }
 
-    fun invalidate(contentChanged: Boolean = false) {
-        contentTransition = contentChanged
+    fun invalidate() {
         candidate = null
         if (!pending) {
             epoch++
@@ -54,15 +52,13 @@ internal class ForegroundScreenState(
             val previous = identity
             val changedApp = previous != null && (previous.packageName != current.packageName ||
                 previous.windowId != current.windowId)
-            val changedContent = contentTransition && previous == current
             identity = current
             val time = now()
             snapshot = ScreenSnapshot(UUID.randomUUID().toString(), epoch, current.width, current.height,
                 current.rotation, current.windowId, current.packageName, time, time)
             pending = false
-            contentTransition = false
-            // Lock, geometry and service invalidations alone never authorize same-content release.
-            if (changedApp || changedContent) onVerified(snapshot!!, launcher)
+            // Stable package/window plus token rotation is not verified changed-media proof.
+            if (changedApp) onVerified(snapshot!!, launcher)
         } else snapshot = snapshot?.copy(sampledUs = now())
     }
 }
