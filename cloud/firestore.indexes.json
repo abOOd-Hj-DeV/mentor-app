@@ -1,0 +1,8 @@
+{
+  "indexes": [
+    {"collectionGroup": "mentor_envelopes", "queryScope": "COLLECTION", "fields": [{"fieldPath": "pairId", "order": "ASCENDING"}, {"fieldPath": "recipientId", "order": "ASCENDING"}, {"fieldPath": "deleted", "order": "ASCENDING"}, {"fieldPath": "receivedAtMs", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]},
+    {"collectionGroup": "mentor_pairs", "queryScope": "COLLECTION", "fields": [{"fieldPath": "guardian.auth_uid", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}]},
+    {"collectionGroup": "mentor_pairs", "queryScope": "COLLECTION", "fields": [{"fieldPath": "child.auth_uid", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}]}
+  ],
+  "fieldOverrides": []
+}
