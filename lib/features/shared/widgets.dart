@@ -54,11 +54,11 @@ class StatusPill extends StatelessWidget {
     this.text, {
     super.key,
     this.ready = false,
-    this.textDirection,
+    this.semanticsLabel,
   });
   final String text;
   final bool ready;
-  final TextDirection? textDirection;
+  final String? semanticsLabel;
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -66,9 +66,8 @@ class StatusPill extends StatelessWidget {
       color: ready ? const Color(0xffe4f1eb) : const Color(0xffffefda),
       borderRadius: BorderRadius.circular(12),
     ),
-    child: Text(
-      text,
-      textDirection: textDirection,
+    child: Text.rich(
+      TextSpan(text: text, semanticsLabel: semanticsLabel),
       style: TextStyle(
         color: ready ? teal : caution,
         fontWeight: FontWeight.w700,

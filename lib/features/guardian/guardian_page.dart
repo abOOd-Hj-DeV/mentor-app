@@ -89,8 +89,8 @@ class _GuardianPageState extends State<GuardianPage> {
               if (preview != null) ...[
                 const SizedBox(height: 16),
                 StatusPill(
-                  'معاينة الفئة ${preview.label}',
-                  textDirection: TextDirection.ltr,
+                  'معاينة الفئة ${preview.displayLabel}',
+                  semanticsLabel: 'معاينة الفئة ${preview.label}',
                 ),
                 const SizedBox(height: 8),
                 Text(
