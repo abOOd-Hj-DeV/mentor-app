@@ -39,6 +39,8 @@ Map<String, Object?> stateData({
           'stage': 2,
           'explanationKey': 'calm_younger',
           'canNavigateHome': true,
+          'actionRevision': '1',
+          'targetScreenToken': eventId,
         }
       : null,
   'error': null,

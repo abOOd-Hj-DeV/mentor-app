@@ -7,6 +7,13 @@ internal data class ActiveProtection(
     val target: ScreenSnapshot, val masks: List<AppliedMask>,
 )
 
+internal fun protectionWire(active: ActiveProtection?) = mapOf(
+    "stage" to (active?.stage ?: 0), "event_id" to active?.eventId,
+    "action_revision" to active?.revision?.toString(), "target_screen_token" to active?.target?.token,
+    "applied_at_us" to active?.appliedUs?.toString(),
+    "covered_rects" to active?.masks.orEmpty().map { it.rect.wire() }, "release_pending" to false,
+)
+
 /** Main-thread state machine. Journal work is delegated off the main/socket reader threads. */
 internal class ProtectionController(
     private val now: () -> Long,

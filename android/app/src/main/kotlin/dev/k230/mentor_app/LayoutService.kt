@@ -45,6 +45,7 @@ class LayoutService : AccessibilityService() {
     private val collectAfterEvent = Runnable { collect() }
 
     override fun onServiceConnected() {
+        dev.k230.mentor_app.protection.NativeSecurityProvider.install(this).initialize()
         instance = this
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) diagnostics.start(session)
         validFromUs = nowUs()

@@ -5,6 +5,8 @@ import com.google.crypto.tink.HybridDecrypt
 import com.google.gson.JsonObject
 import dev.k230.mentor_app.protection.security.*
 import dev.k230.mentor_app.protection.events.*
+import dev.k230.mentor_app.protection.events.ControlOperation
+import dev.k230.mentor_app.protection.security.DeviceRole
 import org.junit.Assert.*
 import org.junit.Test
 import java.security.KeyPair

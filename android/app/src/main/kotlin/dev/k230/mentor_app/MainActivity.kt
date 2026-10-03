@@ -8,12 +8,14 @@ import io.flutter.plugin.common.MethodChannel
 import android.os.Bundle
 import android.view.WindowManager
 import dev.k230.mentor_app.protection.ProtectionChannel
+import dev.k230.mentor_app.protection.NativeSecurityProvider
 
 class MainActivity : FlutterActivity() {
     private var protectionChannel: ProtectionChannel? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        NativeSecurityProvider.install(this).attach(this)
     }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -37,8 +39,14 @@ class MainActivity : FlutterActivity() {
         super.onPause()
     }
     override fun onDestroy() {
+        NativeSecurityProvider.install(this).detach(this)
         protectionChannel?.close()
         protectionChannel = null
         super.onDestroy()
+    }
+    @Deprecated("Activity result bridge for native credentials and QR")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!NativeSecurityProvider.install(this).activityResult(requestCode, resultCode, data))
+            super.onActivityResult(requestCode, resultCode, data)
     }
 }

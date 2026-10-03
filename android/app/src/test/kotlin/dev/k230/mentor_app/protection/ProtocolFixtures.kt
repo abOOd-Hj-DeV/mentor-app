@@ -10,6 +10,7 @@ internal object ProtocolFixtures {
     val screen = ScreenSnapshot(SCREEN, 1, 1080, 2400, 0, 7, "com.example.viewer", 10_450_000, 9_000_000)
     fun bind() = mapOf("v" to 2, "type" to "bind", "session_id" to SESSION, "seq" to "1",
         "stream_id" to STREAM, "pts_clock" to "android_system_nano_time_us",
+        "capture_pts_us" to null,
         "capture" to mapOf("source" to "scrcpy-4.0-display", "display_id" to 0, "mirror" to false,
             "custom_crop" to false, "custom_rotation" to false))
     fun region(p: Double, h: Double, s: Double, pts: List<Long>, track: Long = 1,

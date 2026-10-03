@@ -60,7 +60,18 @@ class PlatformProtectionRepository implements ProtectionRepository {
     try {
       final value = await _channel
           .invokeMethod<Object?>(method, arguments)
-          .timeout(const Duration(seconds: 15));
+          .timeout(
+            Duration(
+              seconds:
+                  {
+                    'guardianAuthenticate',
+                    'scanPairQr',
+                    'getPairQr',
+                  }.contains(method)
+                  ? 300
+                  : 15,
+            ),
+          );
       return parse(value);
     } on MissingPluginException {
       throw const ProtectionFailure('native_unavailable');
@@ -191,6 +202,10 @@ class PlatformProtectionRepository implements ProtectionRepository {
 }
 
 String errorMessage(String? code) => switch (code) {
+  'clock_unverified' =>
+    'التحليل الحي غير مفعّل: لم يُتحقق من توافق ساعة الالتقاط على هذا الجهاز. يلزم اختبار PTS عملي قبل تفعيل التنفيذ.',
+  'challenge_required' =>
+    'امسح تحدياً حديثاً من جهاز الطفل لهذه العملية أولاً.',
   'unsupported_device' =>
     'الحماية الأصلية متاحة على Android فقط. هذه الواجهة للقراءة ولا توفر حماية على الويب.',
   'native_unavailable' =>

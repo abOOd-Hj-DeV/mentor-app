@@ -11,6 +11,12 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ImageView
+import com.journeyapps.barcodescanner.DecoratedBarcodeView
+import com.journeyapps.barcodescanner.BarcodeCallback
+import com.journeyapps.barcodescanner.BarcodeResult
+import com.journeyapps.barcodescanner.DefaultDecoderFactory
+import com.google.zxing.BarcodeFormat
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal class AccessibilityOverlayController(
@@ -23,6 +29,8 @@ internal class AccessibilityOverlayController(
     private val installed = mutableListOf<Window>()
     private var transaction = 0L
     private var suspended = false
+    private var helpPanel: LinearLayout? = null
+    private var helpScanner: DecoratedBarcodeView? = null
 
     fun cover(rects: List<PixelRect>, screen: ScreenSnapshot, done: (Result<List<PixelRect>>) -> Unit) {
         val complete = try {
@@ -126,16 +134,79 @@ internal class AccessibilityOverlayController(
         })
         addView(Button(service).apply { text = "العودة إلى الأمان"; setOnClickListener { safeHome() } })
         addView(Button(service).apply { text = "طلب مساعدة وليّ الأمر"; setOnClickListener { help() } })
+        addView(LinearLayout(service).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            helpPanel = this })
+    }
+
+    fun showHelp(reply: SecurityReply) {
+        val panel = helpPanel?.takeIf { it.isAttachedToWindow && installed.any { w -> w.shield } } ?: return
+        helpScanner?.pause(); helpScanner = null
+        panel.removeAllViews()
+        val payload = ((reply as? SecurityReply.Value)?.data as? Map<*, *>)?.get("qrPayload") as? String
+        if (payload != null) {
+            try {
+                val size = (service.resources.displayMetrics.widthPixels * .65f).toInt().coerceIn(160, 512)
+                panel.addView(ImageView(service).apply {
+                    setImageBitmap(NativeQr.bitmap(payload, size)); contentDescription = "رمز طلب مساعدة ولي الأمر"
+                }, LinearLayout.LayoutParams(size, size))
+                panel.addView(TextView(service).apply {
+                    text = "ليَمسح ولي الأمر هذا الرمز من جهازه المقترن. لا يُرسل الطلب سحابياً؛ تبقى الحماية فعّالة."
+                    gravity = Gravity.CENTER; setTextColor(Color.rgb(18, 41, 57))
+                })
+                panel.addView(Button(service).apply {
+                    text = "مسح رد ولي الأمر مع إبقاء الحاجب"
+                    setOnClickListener { scanHelp(panel, size) }
+                })
+                return
+            } catch (_: Exception) { panel.removeAllViews() }
+        }
+        panel.addView(TextView(service).apply {
+            text = "طلب المساعدة غير متاح الآن. تحقق من اقتران الجهاز وفتحه؛ تبقى الحماية فعّالة."
+            gravity = Gravity.CENTER; setTextColor(Color.rgb(18, 41, 57))
+        })
+    }
+
+    private fun scanHelp(panel: LinearLayout, size: Int) {
+        if (service.checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            panel.addView(TextView(service).apply { text = "الكاميرا غير متاحة. امنحها للتطبيق أثناء الاقتران؛ لا تُرفع الحماية." })
+            return
+        }
+        helpScanner?.pause()
+        panel.removeAllViews()
+        val status = TextView(service).apply { text = "امسح التحكم الموقّع من جهاز ولي الأمر. الحاجب باقٍ." }
+        panel.addView(status)
+        val scanner = DecoratedBarcodeView(service)
+        helpScanner = scanner
+        scanner.barcodeView.decoderFactory = DefaultDecoderFactory(listOf(BarcodeFormat.QR_CODE))
+        panel.addView(scanner, LinearLayout.LayoutParams(size, size))
+        scanner.decodeSingle(object : BarcodeCallback {
+            override fun barcodeResult(result: BarcodeResult) {
+                scanner.pause()
+                val bytes = result.text.toByteArray(Charsets.UTF_8)
+                val receive = ProtectionIntegration.receiveProtectedControl
+                if (bytes.size !in 1..2953 || receive == null) { status.text = "تعذر التحقق من الرد. الحاجب باقٍ."; return }
+                receive(bytes) { reply -> handler.post {
+                    if (helpScanner === scanner && panel.isAttachedToWindow) {
+                        status.text = if (reply is SecurityReply.Error) "رد غير صالح أو منتهي. الحاجب باقٍ."
+                            else "تم التحقق من الرد؛ إزالة الحاجب تتطلب منحاً صالحاً لهذه الحادثة."
+                    }
+                } }
+            }
+        })
+        scanner.resume()
     }
 
     fun suspendForKeyguard(locked: Boolean) {
         if (suspended == locked) return
         suspended = locked
+        if (locked) helpScanner?.pause()
         installed.forEach { it.view.visibility = if (locked) View.GONE else View.VISIBLE }
     }
     fun clear() {
         transaction++
         installed.forEach { manager.removeViewImmediate(it.view) }
         installed.clear()
+        helpScanner?.pause(); helpScanner = null
+        helpPanel = null
     }
 }

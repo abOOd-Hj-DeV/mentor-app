@@ -14,6 +14,7 @@ interface CredentialPrompt {
 /** Forward the hosting Activity's result here. No MethodChannel accepts an auth result. */
 class AndroidCredentialPrompt(private val activity: Activity) : CredentialPrompt {
     private var callback: ((Boolean) -> Unit)? = null
+    val pending: Boolean get() = callback != null
     override fun launch(onResult: (Boolean) -> Unit) {
         StrictJson.ensure(callback == null, "busy")
         val keyguard = activity.getSystemService(KeyguardManager::class.java)
@@ -72,6 +73,7 @@ class GuardianAuthorization(
         invalidate()
     }
     fun invalidate() { lifecycleGeneration++; expiresAtMs = null }
+    fun credentialActivityBackgrounded() { expiresAtMs = null }
 }
 
 /** Typed integration surface; scans never return camera bytes to Dart. */

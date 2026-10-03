@@ -85,5 +85,6 @@ internal class ProtectionChannel(private val activity: Activity, messenger: Bina
     private fun sanitizedError(code: String): String = if (code in setOf("security_unconfigured",
         "guardian_auth_required", "permission_missing", "invalid_age", "bounds", "locked", "storage_failed",
         "action_failed", "policy_mismatch", "stale", "event_conflict", "key_lost", "unpaired", "busy",
-        "invalid_signature", "invalid_pairing", "cloud_unconfigured")) code else "action_failed"
+        "invalid_signature", "invalid_pairing", "cloud_unconfigured", "clock_unverified", "challenge_required",
+        "camera_unavailable", "scan_cancelled", "secure_lock_required", "authentication_unavailable", "unavailable")) code else "action_failed"
 }

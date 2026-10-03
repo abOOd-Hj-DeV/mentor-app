@@ -19,6 +19,7 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
     private var streamId: String? = null
     private var outgoingSeq = 0L
     private var bound = false
+    private val captureClock = CaptureClockBinding()
     private var closed = false
     private var lastStateUs = 0L
     private val bootId = bootScopedId()
@@ -28,7 +29,7 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
             if (::controller.isInitialized) controller.verifiedNavigation(screen, launcher)
         })
     private val home = HomeExecutor(service, handler, tracker, ::nowUs)
-    private val overlay = AccessibilityOverlayController(service, handler,
+    private val overlay: AccessibilityOverlayController = AccessibilityOverlayController(service, handler,
         mayAttach = { screen ->
             !closed && !tracker.locked && tracker.snapshot?.let {
                 it.token == screen.token && it.width == screen.width && it.height == screen.height &&
@@ -40,22 +41,25 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
         help = {
             controller.active?.let { a ->
                 ProtectionIntegration.security.invoke(
-                    SecurityRequest.CreateChallenge(ControlOperation.UNLOCK, a.eventId)) { }
+                    SecurityRequest.CreateChallenge(ControlOperation.UNLOCK, a.eventId)) { reply ->
+                    handler.post { if (!closed && controller.active?.eventId == a.eventId) overlay.showHelp(reply) }
+                }
             }
         })
     private lateinit var controller: ProtectionController
     private val socket = CompanionSocket(
         main = { task -> handler.post { if (!closed) task() } },
         hello = ::hello,
-        onConnect = { id -> sessionId = id; streamId = null; outgoingSeq = 0; bound = false; changed() },
+        onConnect = { id -> sessionId = id; streamId = null; outgoingSeq = 0; bound = false; captureClock.reset(); changed() },
         onDisconnect = { id ->
-            if (sessionId == id) { sessionId = null; streamId = null; bound = false; controller.disconnect(); changed() }
+            if (sessionId == id) { sessionId = null; streamId = null; bound = false; captureClock.reset(); controller.disconnect(); changed() }
         },
         onCommand = ::command,
     )
     var onStateChanged: (() -> Unit)? = null
 
     init {
+        ProtectionIntegration.activeEvent = { controller.active?.eventId }
         controller = ProtectionController(::nowUs, { tracker.snapshot }, { tracker.locked },
             { ProtectionIntegration.security }, object : ProtectionActions {
                 override fun cover(rects: List<PixelRect>, screen: ScreenSnapshot,
@@ -114,15 +118,15 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
         if (id != sessionId) return
         when (cmd) {
             is BindCommand -> {
-                val verified = ProtectionIntegration.captureClockVerified(cmd)
-                val error = if (bound) "busy" else if (!verified) "clock_unverified" else null
+                val receiveUs = nowUs()
+                val result = if (bound) ClockBindingReply("rejected", "busy") else captureClock.bind(cmd, receiveUs)
                 socket.send(id, mapOf("v" to 2, "type" to "bound", "session_id" to id,
                     "seq" to nextSeq(), "request_seq" to cmd.seq.toString(), "stream_id" to cmd.streamId,
-                    "status" to if (error == null) "accepted" else "rejected", "error" to error,
-                    "phone_time_us" to nowUs().toString()))
-                if (error == null) {
+                    "status" to result.status, "error" to result.error,
+                    "phone_time_us" to receiveUs.toString()))
+                if (result.status == "accepted") {
                     bound = true; streamId = cmd.streamId
-                    controller.bind(id, cmd.streamId, verified)
+                    controller.bind(id, cmd.streamId, true)
                     publishState()
                 }
             }
@@ -162,9 +166,7 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
         socket.send(id, mapOf("v" to 2, "type" to "state", "session_id" to id,
             "seq" to nextSeq(), "stream_id" to stream, "phone_time_us" to nowUs().toString(),
             "policy" to security.profile()?.wire(), "screen" to tracker.snapshot?.wire(),
-            "protection" to mapOf("stage" to (active?.stage ?: 0), "event_id" to active?.eventId,
-                "applied_at_us" to active?.appliedUs?.toString(),
-                "covered_rects" to active?.masks.orEmpty().map { it.rect.wire() }, "release_pending" to false),
+            "protection" to protectionWire(active),
             "health" to mapOf("accessibility" to true, "keystore" to state.encryption,
                 "pairing" to state.pairing, "cloud" to state.cloud, "outbox_count" to state.outboxCount)))
     }
@@ -187,21 +189,24 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
                     tracker.snapshot?.status == "verified") "ready" else "degraded",
                 "encryption" to state.encryption, "cloud" to state.cloud, "outboxCount" to state.outboxCount),
             "activeProtection" to active?.let { mapOf("eventId" to it.eventId, "stage" to it.stage,
+                "actionRevision" to it.revision.toString(), "targetScreenToken" to it.target.token,
                 "explanationKey" to if ((profile?.age ?: 10) <= 12) "calm_younger" else "calm_older",
                 "canNavigateHome" to !tracker.locked) },
-            "error" to (controller.error ?: socket.error))
+            "error" to (controller.error ?: socket.error ?: if (socket.connected && !bound) "clock_unverified" else null))
     }
 
     fun navigateHome(reply: (Map<String, Any?>) -> Unit) {
         if (!home.request { verified ->
-                reply(mapOf("executed" to verified, "action" to if (verified) "home" else "none",
+                reply(mapOf("status" to if (verified) "executed" else "failed",
+                    "stage" to if (verified) 3 else 0, "action" to if (verified) "home" else "none",
                     "error" to if (verified) null else "home_unverified"))
-            }) reply(mapOf("executed" to false, "action" to "none",
+            }) reply(mapOf("status" to "failed", "stage" to 0, "action" to "none",
                 "error" to if (tracker.locked) "locked" else "action_failed"))
     }
     override fun close() {
         closed = true
         ProtectionIntegration.guardianRelease = null
+        ProtectionIntegration.activeEvent = { null }
         handler.removeCallbacksAndMessages(null)
         socket.close(); home.close(); controller.disconnect()
         // Service destruction necessarily removes its accessibility windows; never claim a release.

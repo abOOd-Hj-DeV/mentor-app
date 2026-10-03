@@ -65,6 +65,7 @@ internal sealed interface CompanionCommand {
 }
 internal data class BindCommand(
     override val sessionId: String, override val seq: Long, override val streamId: String,
+    val capturePtsUs: Long? = null,
 ) : CompanionCommand
 internal data class DecisionCommand(
     override val sessionId: String, override val seq: Long, override val streamId: String,
@@ -147,14 +148,15 @@ internal object CompanionProtocol {
     }
 
     private fun parseBind(o: Obj): BindCommand {
-        o.keys("v", "type", "session_id", "seq", "stream_id", "pts_clock", "capture")
+        o.keys("v", "type", "session_id", "seq", "stream_id", "pts_clock", "capture", "capture_pts_us")
         requireProtocol(o.string("pts_clock") == "android_system_nano_time_us", "clock_unverified")
         o.obj("capture").apply {
             keys("source", "display_id", "mirror", "custom_crop", "custom_rotation")
             requireProtocol(string("source") == "scrcpy-4.0-display" && int("display_id") == 0 &&
                 !bool("mirror") && !bool("custom_crop") && !bool("custom_rotation"), "invalid_transform")
         }
-        return BindCommand(o.id("session_id"), o.long("seq", 1), o.id("stream_id"))
+        return BindCommand(o.id("session_id"), o.long("seq", 1), o.id("stream_id"),
+            o.nullableLong("capture_pts_us"))
     }
 
     private fun parseDecision(o: Obj): DecisionCommand {
@@ -252,6 +254,7 @@ internal object CompanionProtocol {
             requireProtocol(decimal.matches(s))
             return (s.toLongOrNull() ?: throw ProtocolFailure("bounds")).also { requireProtocol(it >= min) }
         }
+        fun nullableLong(key: String): Long? = if (values[key] == null) null else long(key, 1)
         fun int(key: String, range: IntRange = Int.MIN_VALUE..Int.MAX_VALUE): Int {
             val n = values[key] as? NumberLexeme ?: throw ProtocolFailure("malformed_json")
             requireProtocol(Regex("-?(0|[1-9][0-9]*)").matches(n.value), "malformed_json")

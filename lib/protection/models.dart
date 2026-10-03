@@ -155,18 +155,29 @@ class ActiveProtection {
     this.stage,
     this.explanationKey,
     this.canNavigateHome,
+    this.actionRevision,
+    this.targetScreenToken,
   );
-  final String eventId, explanationKey;
+  final String eventId, explanationKey, actionRevision, targetScreenToken;
   final int stage;
   final bool canNavigateHome;
   factory ActiveProtection.fromNative(Object? value) {
     final data = object(value);
-    exactKeys(data, {'eventId', 'stage', 'explanationKey', 'canNavigateHome'});
+    exactKeys(data, {
+      'eventId',
+      'stage',
+      'explanationKey',
+      'canNavigateHome',
+      'actionRevision',
+      'targetScreenToken',
+    });
     return ActiveProtection(
       uuidField(data, 'eventId'),
       integerField(data, 'stage', 1, 3),
       enumField(data, 'explanationKey', {'calm_younger', 'calm_older'}),
       boolField(data, 'canNavigateHome'),
+      decimalField(data, 'actionRevision', min: 1).toString(),
+      uuidField(data, 'targetScreenToken'),
     );
   }
 }

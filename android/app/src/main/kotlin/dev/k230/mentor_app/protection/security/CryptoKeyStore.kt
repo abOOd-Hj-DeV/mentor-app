@@ -30,6 +30,8 @@ class CryptoKeyStore(private val context: Context, private val role: Role) {
     private val prefix = "mentor.v2.${role.name.lowercase()}"
     private val store: KeyStore get() = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
+    fun exists(): Boolean = store.containsAlias("$prefix.wrap") && store.containsAlias("$prefix.sign")
+
     private fun requireUnlocked() {
         val keyguard = context.getSystemService(KeyguardManager::class.java)
         StrictJson.ensure(keyguard.isDeviceSecure && !keyguard.isDeviceLocked, "locked")
