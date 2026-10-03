@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import java.security.SecureRandom
 import java.util.ArrayDeque
+import dev.k230.mentor_app.protection.ProtectionRuntime
 
 class LayoutService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
@@ -29,6 +30,8 @@ class LayoutService : AccessibilityService() {
         },
     )
     private val socket = LayoutSocket(diagnostics)
+    internal var protection: ProtectionRuntime? = null
+        private set
     private val session = SecureRandom().nextLong().ushr(1).coerceAtLeast(1)
     private var sequence = 0L
     private var validFromUs = 0L
@@ -52,10 +55,12 @@ class LayoutService : AccessibilityService() {
                 collect()
             }
         }
+        protection = ProtectionRuntime(this).also { it.start() }
         handler.post(refresh)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        protection?.event(event)
         validFromUs = maxOf(validFromUs, minOf(nowUs(), event.eventTime * 1000))
         invalidate()
         handler.removeCallbacks(collectAfterEvent)
@@ -63,6 +68,7 @@ class LayoutService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        protection?.interrupt()
         validFromUs = nowUs()
         invalidate()
     }
@@ -194,6 +200,8 @@ class LayoutService : AccessibilityService() {
         diagnostics.event("service_destroy")
         handler.removeCallbacksAndMessages(null)
         socket.close()
+        protection?.close()
+        protection = null
         diagnostics.close()
         if (instance === this) instance = null
         super.onDestroy()
