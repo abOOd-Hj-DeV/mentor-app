@@ -34,7 +34,8 @@ internal class SealedExecutionJournal(private val store: SealedStore, private va
                 result.isJsonNull || previous["released"].asBoolean) return JournalReservation.Conflict
             val status = StrictJson.string(result.asJsonObject, "status")
             val executedStage = StrictJson.int(result.asJsonObject, "stage")
-            if (executedStage >= 3) return JournalReservation.Conflict
+            if (executedStage >= 3 || StrictJson.int(previous, "stage") == 3 && executedStage > 0)
+                return JournalReservation.Conflict
             if (executedStage == 0) {
                 if (status !in setOf("failed", "rejected") || rev != 1L ||
                     !previous.has("evidence_end_us") || !result.asJsonObject["executedUs"].isJsonNull ||
