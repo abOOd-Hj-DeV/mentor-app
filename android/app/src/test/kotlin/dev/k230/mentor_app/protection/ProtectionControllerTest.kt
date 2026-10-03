@@ -196,7 +196,8 @@ class ProtectionControllerTest {
         val h = Harness()
         h.actions.homeVerified = null
         h.decide(ProtocolFixtures.parse(ProtocolFixtures.decision(3,.96,0.0,0.0,longChain)))
-        h.screen = h.screen.copy(token=ProtocolFixtures.CONTINUITY,packageName="com.safe.launcher",windowId=9)
+        h.screen = h.screen.copy(token=ProtocolFixtures.CONTINUITY,epoch=2,
+            packageName="com.safe.launcher",windowId=9)
         h.controller.verifiedNavigation(h.screen,true)
         assertEquals(0,h.actions.clearCount)
         h.actions.pendingHome!!(true)
@@ -287,13 +288,124 @@ class ProtectionControllerTest {
         assertEquals("event_conflict",h.replies.last().error)
         assertEquals(2,h.controller.active!!.stage)
     }
-    @Test fun verifiedNavigationNeverClearsToSameUnderlyingProtectedScreen() {
+    @Test fun onlyFreshVerifiedContentOrNavigationClearsTheProtectedTarget() {
         val h = Harness()
         h.decide()
-        h.controller.verifiedNavigation(h.screen.copy(token=ProtocolFixtures.CONTINUITY,epoch=2),false)
+        h.controller.verifiedNavigation(h.screen,false)
         assertEquals(0,h.actions.clearCount)
-        h.controller.verifiedNavigation(h.screen.copy(token=ProtocolFixtures.CONTINUITY,
-            packageName="com.safe.other",windowId=9),false)
+        h.controller.verifiedNavigation(h.screen.copy(token=ProtocolFixtures.CONTINUITY,epoch=2,
+            status="invalid"),false)
+        assertEquals(0,h.actions.clearCount)
+        h.controller.verifiedNavigation(h.screen.copy(token=ProtocolFixtures.CONTINUITY,epoch=2),false)
         assertEquals(1,h.actions.clearCount)
+    }
+
+    private class ScreenHarness {
+        val h = Harness()
+        val identity = ScreenIdentity(h.screen.width,h.screen.height,h.screen.rotation,
+            h.screen.windowId,h.screen.packageName)
+        lateinit var state: ForegroundScreenState
+        init {
+            state = ForegroundScreenState("dev.k230.mentor_app", { h.now }, {
+                h.screen = state.snapshot!!
+                h.controller.invalidateGeometry()
+            }, { next, launcher ->
+                h.screen = next
+                h.controller.verifiedNavigation(next,launcher)
+            })
+            h.now = 9_000_000
+            refresh()
+            h.now += 100_000
+            refresh()
+            h.now = 10_450_000
+            refresh()
+        }
+        fun refresh(current: ScreenIdentity = identity, launcher: Boolean = false) {
+            state.refresh(current,false,launcher)
+            h.screen = state.snapshot ?: h.screen
+        }
+        fun decide(stage: Int = 1) {
+            val json = if (stage == 3) ProtocolFixtures.decision(3,.96,0.0,0.0,
+                listOf(9_400_000L,9_650_000,9_900_000,10_150_000,10_400_000))
+                else ProtocolFixtures.decision()
+            h.decide(ProtocolFixtures.parse(json + ("screen_token" to h.screen.token)))
+        }
+    }
+
+    @Test fun sameAppContentTransitionShieldsDuringInvalidGapThenReleasesAfterStableFreshToken() {
+        val s = ScreenHarness()
+        s.decide()
+        val old = s.h.screen
+        s.state.contentEvent(old.packageName,old.windowId,true)
+        assertEquals("invalid",s.state.snapshot!!.status)
+        assertEquals(2,s.h.controller.active!!.stage)
+        assertEquals(listOf("cover","shield"),s.h.actions.calls)
+        assertEquals(0,s.h.actions.clearCount)
+        s.refresh()
+        s.h.now += 99_999
+        s.refresh()
+        assertEquals("invalid",s.state.snapshot!!.status)
+        assertEquals(0,s.h.actions.clearCount)
+        s.h.now++
+        s.refresh()
+        assertEquals("verified",s.h.screen.status)
+        assertNotEquals(old.token,s.h.screen.token)
+        assertTrue(s.h.screen.epoch > old.epoch)
+        assertEquals(old.packageName,s.h.screen.packageName)
+        assertEquals(old.windowId,s.h.screen.windowId)
+        assertEquals(1,s.h.actions.clearCount)
+        assertNull(s.h.controller.active)
+    }
+
+    @Test fun ownOverlayUnattributedAndWrongWindowEventsNeverInvalidateOrRelease() {
+        val s = ScreenHarness()
+        s.decide()
+        val old = s.h.screen
+        s.state.contentEvent("dev.k230.mentor_app",old.windowId,true)
+        s.state.contentEvent(old.packageName,old.windowId,false)
+        s.state.contentEvent(old.packageName,old.windowId+1,true)
+        s.state.contentEvent(null,old.windowId,true)
+        s.h.now += 200_000
+        s.refresh()
+        assertEquals(old.token,s.h.screen.token)
+        assertEquals(old.epoch,s.h.screen.epoch)
+        assertEquals(listOf("cover"),s.h.actions.calls)
+        assertEquals(1,s.h.controller.active!!.stage)
+        assertEquals(0,s.h.actions.clearCount)
+    }
+
+    @Test fun homeStageReleasesOnlyAfterVerifiedStableLauncherNotSameAppContent() {
+        val s = ScreenHarness()
+        s.decide(3)
+        assertEquals(3,s.h.controller.active!!.stage)
+        s.state.contentEvent(s.identity.packageName,s.identity.windowId,true)
+        s.refresh()
+        s.h.now += 100_000
+        s.refresh()
+        assertEquals(0,s.h.actions.clearCount)
+        val launcher = s.identity.copy(packageName="com.safe.launcher",windowId=9)
+        s.refresh(launcher,true)
+        s.h.now += 99_999
+        s.refresh(launcher,true)
+        assertEquals(0,s.h.actions.clearCount)
+        s.h.now++
+        s.refresh(launcher,true)
+        assertEquals(1,s.h.actions.clearCount)
+        assertNull(s.h.controller.active)
+    }
+
+    @Test fun geometryOrServiceInvalidationDoesNotTreatTheSameContentAsNavigation() {
+        for (geometry in listOf(false,true)) {
+            val s = ScreenHarness()
+            s.decide()
+            s.state.invalidate()
+            val current = if (geometry) s.identity.copy(rotation=90) else s.identity
+            s.refresh(current)
+            s.h.now += 100_000
+            s.refresh(current)
+            assertEquals("verified",s.h.screen.status)
+            assertEquals(2,s.h.controller.active!!.stage)
+            assertEquals(0,s.h.actions.clearCount)
+        }
     }
 }

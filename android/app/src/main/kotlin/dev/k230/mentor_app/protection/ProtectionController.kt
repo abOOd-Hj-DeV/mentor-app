@@ -172,7 +172,7 @@ internal class ProtectionController(
         if (busy) { pendingNavigation = next to launcher; return }
         val a = active ?: return
         if (a.stage == 3 && !launcher) return
-        if (next.packageName == a.target.packageName && next.windowId == a.target.windowId) return
+        if (next.token == a.target.token || next.epoch <= a.target.epoch) return
         release("verified_navigation")
     }
 
