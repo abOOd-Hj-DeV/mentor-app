@@ -2,12 +2,14 @@ package dev.k230.mentor_app
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.graphics.Point
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -17,7 +19,16 @@ import java.util.ArrayDeque
 
 class LayoutService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
-    private val socket = LayoutSocket()
+    private val diagnostics = LayoutDiagnostics(
+        log = { Log.i("MentorLayout", it) },
+        postHeartbeat = { beat -> handler.post { beat() } },
+        mainStack = {
+            handler.looper.thread.stackTrace.take(14).joinToString(" <- ") {
+                "${it.className}.${it.methodName}:${it.lineNumber}"
+            }
+        },
+    )
+    private val socket = LayoutSocket(diagnostics)
     private val session = SecureRandom().nextLong().ushr(1).coerceAtLeast(1)
     private var sequence = 0L
     private var validFromUs = 0L
@@ -32,6 +43,7 @@ class LayoutService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) diagnostics.start(session)
         validFromUs = nowUs()
         socket.start {
             handler.post {
@@ -77,10 +89,20 @@ class LayoutService : AccessibilityService() {
         socket.publish(snapshot)
     }
 
-    @Suppress("DEPRECATION")
     private fun collect() {
+        diagnostics.beginCollection()
+        try {
+            collectSnapshot()
+        } finally {
+            diagnostics.endCollection()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun collectSnapshot() {
         val dimensions = screen() ?: return
         val start = nowUs()
+        diagnostics.collectorStage("root")
         val root = rootInActiveWindow
         val nodes = mutableListOf<LayoutNode>()
         var flags = 0
@@ -95,6 +117,7 @@ class LayoutService : AccessibilityService() {
             windowId = root.windowId
             queue.add(root)
         }
+        diagnostics.collectorStage("windows")
         val interactiveWindows = windows
         if (interactiveWindows.count { it.type == AccessibilityWindowInfo.TYPE_APPLICATION } > 1) {
             flags = flags or LayoutWire.PARTIAL
@@ -106,6 +129,7 @@ class LayoutService : AccessibilityService() {
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
             visited++
+            diagnostics.collectorStage("node:$visited")
             val stop = nodes.size >= LayoutWire.MAX_NODES || visited >= 1024 || nowUs() - start > 50_000
             if (stop) flags = flags or LayoutWire.PARTIAL
             if (!stop && node.isVisibleToUser) {
@@ -126,6 +150,7 @@ class LayoutService : AccessibilityService() {
                 val available = (1024 - visited - queue.size).coerceAtLeast(0)
                 if (node.childCount > available) flags = flags or LayoutWire.PARTIAL
                 for (index in 0 until minOf(node.childCount, available)) {
+                    diagnostics.collectorStage("getChild:$visited:$index")
                     val child = node.getChild(index)
                     if (child == null) flags = flags or LayoutWire.PARTIAL
                     else queue.add(child)
@@ -140,7 +165,9 @@ class LayoutService : AccessibilityService() {
                 break
             }
         }
+        diagnostics.collectorStage("screen_end")
         val endDimensions = screen()
+        diagnostics.collectorStage("validate_display_magnification")
         if (wrongDisplay || endDimensions != dimensions || magnificationController.scale != 1f) {
             validFromUs = start
             flags = LayoutWire.PARTIAL or LayoutWire.INVALIDATE
@@ -152,6 +179,7 @@ class LayoutService : AccessibilityService() {
             dimensions.first, dimensions.second, dimensions.third, 0, windowId, packageName, nodes,
         )
         latest = snapshot
+        diagnostics.collectorStage("publish")
         socket.publish(snapshot)
     }
 
@@ -163,8 +191,10 @@ class LayoutService : AccessibilityService() {
     )
 
     override fun onDestroy() {
+        diagnostics.event("service_destroy")
         handler.removeCallbacksAndMessages(null)
         socket.close()
+        diagnostics.close()
         if (instance === this) instance = null
         super.onDestroy()
     }
