@@ -9,25 +9,16 @@ import android.os.Build
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
-import java.util.UUID
-
-internal data class ScreenIdentity(val width: Int, val height: Int, val rotation: Int,
-    val windowId: Int, val packageName: String)
 
 /** No text, screenshot or own-overlay event is used as underlying-content proof. */
 internal class ForegroundScreenTracker(
     private val service: AccessibilityService,
-    private val now: () -> Long,
-    private val onInvalidate: () -> Unit,
-    private val onVerified: (ScreenSnapshot, Boolean) -> Unit,
+    now: () -> Long,
+    onInvalidate: () -> Unit,
+    onVerified: (ScreenSnapshot, Boolean) -> Unit,
 ) {
-    var snapshot: ScreenSnapshot? = null
-        private set
-    private var identity: ScreenIdentity? = null
-    private var candidate: ScreenIdentity? = null
-    private var candidateSince = 0L
-    private var epoch = 1L
-    private var pending = true
+    private val state = ForegroundScreenState(service.packageName, now, onInvalidate, onVerified)
+    val snapshot get() = state.snapshot
     private val keyguard = service.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
     val locked get() = keyguard.isKeyguardLocked
     private val launchers: Set<String>
@@ -45,45 +36,18 @@ internal class ForegroundScreenTracker(
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             refresh()
-        } else if (applicationEvent && event.packageName?.toString() == identity?.packageName &&
-            (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
-                event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED)) {
-            // Content changes invalidate evidence, but NEVER prove safe content/release.
-            invalidate()
+        } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            state.contentEvent(event.packageName?.toString(), event.windowId, applicationEvent)
         }
     }
 
-    fun invalidate() {
-        if (!pending) {
-            epoch++
-            val s = snapshot
-            snapshot = s?.copy(token = UUID.randomUUID().toString(), epoch = epoch, status = "invalid",
-                windowId = -1, packageName = "", sampledUs = now(), validFromUs = now())
-            pending = true
-            candidate = null
-            onInvalidate()
-        }
-    }
+    fun invalidate() = state.invalidate()
 
     fun refresh() {
-        val current = if (!locked) readIdentity() else null
-        if (current == null) {
-            invalidate()
-            snapshot = snapshot?.copy(status = if (locked) "locked" else "unsupported")
-            return
-        }
-        if (current != identity && !pending) invalidate()
-        if (pending) {
-            if (candidate != current) { candidate = current; candidateSince = now(); return }
-            if (now() - candidateSince < 100_000) return
-            val previous = identity
-            identity = current
-            snapshot = ScreenSnapshot(UUID.randomUUID().toString(), epoch, current.width, current.height,
-                current.rotation, current.windowId, current.packageName, now(), now())
-            pending = false
-            if (previous != null && (previous.packageName != current.packageName ||
-                    previous.windowId != current.windowId)) onVerified(snapshot!!, current.packageName in launchers)
-        } else snapshot = snapshot?.copy(sampledUs = now())
+        val isLocked = locked
+        val current = if (!isLocked) readIdentity() else null
+        state.refresh(current, isLocked, current?.packageName in launchers)
     }
 
     fun isLauncher() = snapshot?.let { it.status == "verified" && it.packageName in launchers } == true
