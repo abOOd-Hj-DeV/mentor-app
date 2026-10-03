@@ -168,6 +168,11 @@ class SecurityEventsTest {
         rejected { c.scanConfirmation(StrictJson.json(tampered)) }
         assertEquals(guardian.peer.signingKid, c.scanConfirmation(confirm).guardian.signingKid)
         assertEquals(child.peer.hpkeKid, g.scanConfirmation(confirm).child.hpkeKid)
+        val transcript = c.retainedTranscript()!!
+        assertEquals(pairId, transcript.pair.pairId)
+        assertEquals(transcript.sha256, StrictJson.string(StrictJson.parse(transcript.membershipBody()), "transcript_sha256"))
+        assertEquals(setOf("v", "pair_id", "guardian", "child", "offer", "response", "confirmation"),
+            StrictJson.parse(transcript.registrationBody()).keySet())
         rejected { c.scanConfirmation(confirm) }
         rejected { c.scanOffer(offer) }
         now += 300000001
@@ -207,7 +212,10 @@ class SecurityEventsTest {
         assertArrayEquals(item.envelope, repo.record(metadata(child.peer.deviceId)).envelope)
         val restarted = EncryptedOutbox(SealedStore(disk, kek, pairId, "outbox"), pair, crypto) { active }
         assertArrayEquals(item.envelope, restarted.entries().single().envelope)
-        assertTrue(restarted.failedAttempt(item.messageId, 10000) >= 40000)
+        val retryAt = restarted.failedAttempt(item.messageId, 10000)
+        assertTrue(retryAt >= 40000)
+        assertTrue(restarted.readyEntries(10000).isEmpty())
+        assertEquals(item.messageId, restarted.readyEntries(retryAt).single().messageId)
         rejected { restarted.acknowledge(item.messageId, "stored", "a".repeat(64)) }
         assertEquals(1, restarted.size())
         var callback: ((Boolean) -> Unit)? = null
@@ -224,6 +232,18 @@ class SecurityEventsTest {
         active = false; rejected { outbox.entries() }
         active = true; repo.acknowledge(metadata(child.peer.deviceId).eventId, item.messageId, "duplicate", item.sha256)
         assertNull(outbox.get(item.messageId))
+    }
+
+    @Test fun encryptedRelayStateSurvivesRestartWithoutExposingCursorAndCorruptionFailsClosed() {
+        val disk = Disk(); val key = aead()
+        val state = dev.k230.mentor_app.protection.cloud.EncryptedRelayState(SealedStore(disk, key, pairId, "cloud_state"))
+        assertNull(state.cursor()); state.storeCursor("opaque_cursor"); state.storePairPhase(dev.k230.mentor_app.protection.cloud.RelayPairPhase.ACTIVE)
+        val restarted = dev.k230.mentor_app.protection.cloud.EncryptedRelayState(SealedStore(disk, key, pairId, "cloud_state"))
+        assertEquals("opaque_cursor", restarted.cursor())
+        assertEquals(dev.k230.mentor_app.protection.cloud.RelayPairPhase.ACTIVE, restarted.pairPhase())
+        assertFalse(disk.values["relay_state"]!!.toString(Charsets.UTF_8).contains("opaque_cursor"))
+        disk.values["relay_state"]!![4] = (disk.values["relay_state"]!![4].toInt() xor 1).toByte()
+        rejected { restarted.pairPhase() }
     }
 
     @Test fun metadataHasNoMediaAndEnforcesHentaiCapScoresAndStrictAges() {
