@@ -169,9 +169,15 @@ class RelayTransportTest {
         assertArrayEquals(transcript.membershipBody(), revoke.body.readByteArray())
         val child = MemoryAdapter(RelayBinding(transcript.pair, transcript.pair.child.deviceId, transcript))
         assertThrows(dev.k230.mentor_app.protection.security.SecurityFailure::class.java) {
-            NativeRelaySync(RelayIdentity { RelayCredentials("child", "id-token") }, RelayPushToken { "push-token" },
+            NativeRelaySync(RelayIdentity { error("child revoke must not acquire credentials") }, RelayPushToken { "push-token" },
                 RelayHttpClient(server.url("/relay").toString()), child).revoke()
         }
+        val wrongPair = transcript.pair.copy(pairId = "11111111-1111-4111-8111-111111111111")
+        val mismatched = MemoryAdapter(RelayBinding(wrongPair, transcript.pair.guardian.deviceId, transcript))
+        assertEquals("pair_mismatch", assertThrows(dev.k230.mentor_app.protection.security.SecurityFailure::class.java) {
+            NativeRelaySync(RelayIdentity { error("mismatched pair must not acquire credentials") }, RelayPushToken { "push-token" },
+                RelayHttpClient(server.url("/relay").toString()), mismatched).revoke()
+        }.code)
         assertEquals(1, server.requestCount)
     }
 

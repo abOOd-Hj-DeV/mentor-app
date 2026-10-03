@@ -60,10 +60,7 @@ class NativeRelaySync(
     }
 
     private fun synchronize(binding: RelayBinding, credentials: RelayCredentials, deadline: Long): Boolean {
-        val directPair = binding.transcript.pair
-        StrictJson.ensure(binding.pair.pairId == directPair.pairId &&
-            StrictJson.canonical(binding.pair.guardian.descriptor).contentEquals(StrictJson.canonical(directPair.guardian.descriptor)) &&
-            StrictJson.canonical(binding.pair.child.descriptor).contentEquals(StrictJson.canonical(directPair.child.descriptor)), "pair_mismatch")
+        ensureSamePair(binding)
         val role = binding.transcript.role(binding.localDeviceId)
         val peerUid = if (role == PairRole.GUARDIAN) binding.pair.guardian.authUid else binding.pair.child.authUid
         if (peerUid == null || peerUid != credentials.uid) throw SecurityFailure("identity_mismatch")
@@ -140,12 +137,20 @@ class NativeRelaySync(
 
     fun revoke() {
         val binding = adapter.binding() ?: throw SecurityFailure("pair_missing")
+        ensureSamePair(binding)
+        if (binding.transcript.role(binding.localDeviceId) != PairRole.GUARDIAN) throw SecurityFailure("guardian_only")
         val credentials = identity.credentials(false)
-        if (binding.transcript.role(binding.localDeviceId) != PairRole.GUARDIAN || binding.pair.guardian.authUid != credentials.uid)
-            throw SecurityFailure("guardian_only")
+        if (binding.pair.guardian.authUid != credentials.uid) throw SecurityFailure("guardian_only")
         http.revoke(credentials, binding.transcript)
         adapter.storePairPhase(RelayPairPhase.REVOKED)
         adapter.relayState(RelayState.REVOKED)
+    }
+
+    private fun ensureSamePair(binding: RelayBinding) {
+        val directPair = binding.transcript.pair
+        StrictJson.ensure(binding.pair.pairId == directPair.pairId &&
+            StrictJson.canonical(binding.pair.guardian.descriptor).contentEquals(StrictJson.canonical(directPair.guardian.descriptor)) &&
+            StrictJson.canonical(binding.pair.child.descriptor).contentEquals(StrictJson.canonical(directPair.child.descriptor)), "pair_mismatch")
     }
 
     private fun checkDeadline(deadline: Long) {
