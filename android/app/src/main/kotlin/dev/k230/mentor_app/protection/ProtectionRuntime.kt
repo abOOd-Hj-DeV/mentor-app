@@ -22,7 +22,6 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
     private val captureClock = CaptureClockBinding()
     private var closed = false
     private var lastStateUs = 0L
-    @Volatile private var remoteScreen: ScreenSnapshot? = null
     private val bootId = bootScopedId()
     private val tracker = ForegroundScreenTracker(service, ::nowUs,
         onInvalidate = { if (::controller.isInitialized) controller.invalidateGeometry() },
@@ -95,7 +94,6 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
             val before = tracker.snapshot
             tracker.refresh()
             val after = tracker.snapshot
-            remoteScreen = after?.takeIf { it.status == "verified" }
             if (after?.status == "verified" && before?.status != "verified") {
                 controller.active?.let { active ->
                     if (active.stage == 1 || active.masks.map { it.rect } !=
@@ -103,12 +101,11 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
                 }
             }
             overlay.suspendForKeyguard(tracker.locked)
-            if (nowUs() - lastStateUs >= if (RemoteCaptureProof.active) 200_000 else 1_000_000) publishState()
+            if (nowUs() - lastStateUs >= 1_000_000) publishState()
             handler.postDelayed(this, 100)
         }
     }
     fun start() { socket.start(); handler.post(heartbeat) }
-    fun captureScreen(): ScreenSnapshot? = remoteScreen
     fun event(event: AccessibilityEvent) {
         val before = tracker.snapshot
         tracker.event(event)
@@ -151,7 +148,6 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
         "policy" to ProtectionIntegration.security.profile()?.wire(), "screen" to tracker.snapshot?.wire())
 
     private fun changed() {
-        remoteScreen = tracker.snapshot?.takeIf { it.status == "verified" }
         onStateChanged?.invoke(); ProtectionIntegration.onDisplayStateChanged?.invoke(); publishState()
     }
     private fun publishState() {

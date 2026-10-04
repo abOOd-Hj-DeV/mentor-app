@@ -28,26 +28,6 @@ internal class ProtectionChannel(private val activity: Activity, messenger: Bina
         methods.setMethodCallHandler { call, result ->
             try {
                 when (call.method) {
-                    "getRemoteStatus" -> result.success(RemoteCaptureService.status())
-                    "stopRemote" -> {
-                        requireProtocol(call.arguments == null)
-                        activity.stopService(Intent(activity, RemoteCaptureService::class.java))
-                        result.success(null)
-                    }
-                    "startRemote" -> {
-                        val args = call.arguments as? Map<*, *> ?: throw ProtocolFailure("bounds")
-                        requireProtocol(args.keys == setOf("endpoint", "token", "pin"))
-                        val endpoint = args["endpoint"] as? String ?: throw ProtocolFailure("bounds")
-                        val token = args["token"] as? String ?: throw ProtocolFailure("bounds")
-                        val pin = args["pin"] as? String ?: throw ProtocolFailure("bounds")
-                        RemoteConnectionConfig.parse(endpoint, token, pin)
-                        val security = ProtectionIntegration.security.state()
-                        requireProtocol(security.role == DeviceRole.CHILD && security.pairing == "paired", "unpaired")
-                        requireProtocol(LayoutService.instance?.protection != null, "permission_missing")
-                        activity.startActivity(Intent(activity, RemoteCaptureActivity::class.java)
-                            .putExtra("endpoint", endpoint).putExtra("token", token).putExtra("pin", pin))
-                        result.success(null)
-                    }
                     "getState" -> { requireProtocol(call.arguments == null); result.success(state()) }
                     "openAccessibilitySettings" -> {
                         requireProtocol(call.arguments == null)

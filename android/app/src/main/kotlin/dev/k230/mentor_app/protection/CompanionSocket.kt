@@ -150,8 +150,7 @@ internal class CompanionSocket(
         connected = false
     }
     companion object {
-        fun allowedUid(uid: Int) = uid == 0 || uid == 2000 ||
-            RemoteCaptureProof.active && uid == android.os.Process.myUid()
+        fun allowedUid(uid: Int) = uid == 0 || uid == 2000
         private fun nowUs() = System.nanoTime() / 1000
     }
 }

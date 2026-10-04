@@ -1,33 +1,29 @@
-# Temporary remote analyzer connection
+# اتصال السيرفر عبر ADB وscrcpy
 
-The child app includes a server configuration card. Complete signed pairing
-with the guardian, install an age profile and enable accessibility first.
-Enter the Linux C++ analyzer's `tls://hostname:8443` endpoint, its private
-connection token, and optionally a SHA-256 leaf certificate fingerprint for a
-self-signed certificate. Server-side setup is documented in k230-control's
-`docs/REMOTE_SERVER.md`; this endpoint is a TLS binary service, not Firebase
-or a browser page.
+APK المصحح لا يحتوي MediaProjection أو خدمة إرسال صور الشاشة. يعمل
+تطبيق الطفل كـCompanion v2 وينفذ التغطية والحاجب وHOME، ويحفظ الأحداث
+الوصفية المشفرة للوليّ كما في المسار السابق.
 
-The token is not written to preferences or logs. The foreground service keeps
-it only for the current connection. On Android 14+ the app requests full-display
-sharing, validates capture dimensions before uploading frames, and stops if
-dimensions change. Android consent is required again after stopping. A persistent
-Arabic notification explains sharing and provides a stop action.
+## التفعيل
 
-The optional mode sends PNG images, at up to four per second, to the analyzer
-over TLS. The server decrypts them to run YOLO/NSFWJS, without saving media.
-Encrypted guardian reports continue to originate on the phone. They still
-require the existing Firebase relay configuration for remote delivery.
+1. ثبّت التطبيق على الجهازين، وأكمل الاقتران الآمن وسياسة العمر.
+2. فعّل خدمة إمكانية الوصول على جهاز الطفل.
+3. فعّل التصحيح اللاسلكي من خيارات المطور على Android 11 أو أحدث، مع Wi-Fi.
+4. جهّز مسار شبكة خاص بين الهاتف والسيرفر يصل إلى منفذ ADB الفعلي.
+5. نفّذ `adb pair PHONE_HOST:PAIR_PORT` على السيرفر وأدخل الرمز المعروض
+   على الهاتف. هذا اقتران مستقل عن اقتران الوليّ والطفل.
+6. شغّل حزمة السيرفر بواسطة
+   `sh tools/run_adb_server.sh --connect PHONE_HOST:CONNECT_PORT --max-fps 10`.
 
-Clock probes must refer to timestamps observed by this process. The bridge
-connects to the existing local Companion socket using the app's own UID only
-while capture is active. Normal shell/root USB peers retain the existing path.
-Both paths retain decision expiry, screen identity, age policy, execution
-journal and ACK gates. Opening Mentor's own FLAG_SECURE UI does not yield an
-inspectable underlying screen: after permission, open another application.
+منفذ الاقتران ومنفذ الاتصال مختلفان؛ استخدم القيم الفعلية الظاهرة في
+إعدادات الهاتف. لا تعرّض ADB للإنترنت العام. تثبيت التطبيق وحده لا يمنح
+السيرفر اتصال ADB أو صلاحية تفعيله تلقائياً.
 
-This initial mode does not stream audio, perform offline model inference,
-reconnect automatically, create Firebase accounts or force-stop other apps.
-Disconnect stops new analysis; an existing verified shield is not reported as
-released because transport closed. A physical phone test and actual deployment
-are still needed. Never expose ADB to the Internet for this mode.
+الفيديو والصوت يلتقطهما scrcpy ويرسلهما إلى السيرفر للتحليل. الإشعارات
+البعيدة للوليّ تحتاج إعداد Firebase؛ ذلك منفصل عن اتصال التحليل.
+
+الـAPK نسخة debug للتجربة. لا يوجد ادعاء تحقق اتصال ADB السحابي أو تنفيذ
+الحجب عبره على هاتف حقيقي في هذه البيئة.
+
+السيرفر ودليل التشغيل:
+https://github.com/abOOd-Hj-DeV/k230-control/pull/9

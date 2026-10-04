@@ -66,7 +66,6 @@ internal sealed interface CompanionCommand {
 internal data class BindCommand(
     override val sessionId: String, override val seq: Long, override val streamId: String,
     val capturePtsUs: Long? = null,
-    val captureSource: String = "scrcpy-4.0-display",
 ) : CompanionCommand
 internal data class DecisionCommand(
     override val sessionId: String, override val seq: Long, override val streamId: String,
@@ -153,11 +152,11 @@ internal object CompanionProtocol {
         requireProtocol(o.string("pts_clock") == "android_system_nano_time_us", "clock_unverified")
         o.obj("capture").apply {
             keys("source", "display_id", "mirror", "custom_crop", "custom_rotation")
-            requireProtocol(string("source") in setOf("scrcpy-4.0-display", "android-mediaprojection-display") && int("display_id") == 0 &&
+            requireProtocol(string("source") == "scrcpy-4.0-display" && int("display_id") == 0 &&
                 !bool("mirror") && !bool("custom_crop") && !bool("custom_rotation"), "invalid_transform")
         }
         return BindCommand(o.id("session_id"), o.long("seq", 1), o.id("stream_id"),
-            o.nullableLong("capture_pts_us"), o.obj("capture").string("source"))
+            o.nullableLong("capture_pts_us"))
     }
 
     private fun parseDecision(o: Obj): DecisionCommand {

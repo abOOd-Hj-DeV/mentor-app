@@ -13,10 +13,6 @@ internal class CaptureClockBinding {
         return ClockBindingReply("rejected", "clock_unverified")
     }
     fun bind(command: BindCommand, receivedUs: Long): ClockBindingReply {
-        if (command.captureSource == "android-mediaprojection-display" &&
-            (!RemoteCaptureProof.active || command.capturePtsUs?.let { !RemoteCaptureProof.contains(it) } == true))
-            return reject()
-        if (RemoteCaptureProof.active && command.captureSource != "android-mediaprojection-display") return reject()
         if (failed) return ClockBindingReply("rejected", "clock_unverified")
         if (regression.verified) return ClockBindingReply("rejected", "busy")
         val pts = command.capturePtsUs

@@ -1,15 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <application
         android:allowBackup="false"
         android:label="Mentor"
         android:name=".MentorApplication"
         android:icon="@mipmap/ic_launcher">
-        <activity android:name=".protection.RemoteCaptureActivity" android:exported="false" />
-        <service android:name=".protection.RemoteCaptureService" android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
         <activity android:name=".protection.SecureCaptureActivity" android:exported="false"
             android:screenOrientation="fullSensor" android:theme="@style/zxing_CaptureTheme" />
         <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />

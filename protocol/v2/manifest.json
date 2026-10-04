@@ -2,8 +2,8 @@
   "contract": "mentor-parental-v2.0",
   "files": {
     "README.md": "ab31bb337957e95c54c4564960e538f4379e3b8ae3a8cb5d6e2b774906931844",
-    "companion.manifest.json": "f4e3d32fd57e3cc5e730110f48e13764875c7172535bd8053f8dece0b714151c",
-    "companion.schema.json": "9f4e67e30092e6b4f039ccadf1c13c4667d444ba926fb7f292c6080cd468c4f0",
+    "companion.manifest.json": "98d0bb192c02711e722ba4165d6b1e768c7c9a946941e2e5851b98f47b1cda45",
+    "companion.schema.json": "fc69f5c81f341642d776fe14acefc6593f671d4588c2d2fd2a078984ec1f4fe5",
     "control.schema.json": "9c34aec16cb12e573d97c964085ca21e6e2763d23133ce1480dfe775a86583ec",
     "envelope.schema.json": "f0e079c32a7b5896cdb91ebb3611105b70f9afed27e8a1110983763b2f57247c",
     "fixtures/ack.json": "7c6fa217088b0edd2000846a609a924970c89256a1cc9d1743ba047253ba1e0d",

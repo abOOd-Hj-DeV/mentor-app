@@ -78,7 +78,7 @@ class HealthPage extends StatelessWidget {
                     'legacy' => 'قناة قديمة · تشخيص فقط',
                     _ => 'غير متصل',
                   },
-                  'تعمل قناة v2 عبر USB أو جسر السيرفر الاختياري؛ الاتصال وحده لا يثبت تنفيذ الحماية.',
+                  'تعمل قناة v2 عبر ADB وscrcpy، باستخدام USB أو اتصال شبكي مصرح؛ الاتصال وحده لا يثبت تنفيذ الحماية.',
                   health?.companion == 'connected',
                 ),
                 _healthCard(

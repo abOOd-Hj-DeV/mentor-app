@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../../protection/controller.dart';
 import '../pairing/pairing_page.dart';
 import '../shared/widgets.dart';
-import 'remote_server_card.dart';
 
 class ChildPage extends StatelessWidget {
   const ChildPage({super.key, required this.controller});
@@ -117,9 +116,8 @@ class ChildPage extends StatelessWidget {
             ],
           ),
         ),
-        const RemoteServerCard(),
         const NoticeBox(
-          'المسار المحلي لا يرفع صوراً أو صوتاً. مشاركة الشاشة مع سيرفر التحليل اختيارية وتحتاج موافقة مستقلة. تبقى تنبيهات الوالد مشفّرة من الطرف إلى الطرف.',
+          'يستخدم جهاز المعالجة أو السيرفر scrcpy وADB لالتقاط الشاشة والصوت. لا تُرفق الصور أو الصوت بالتنبيهات؛ التقارير الوصفية مشفّرة للوالد، وإشعاراتها عامة.',
         ),
       ],
     );
