@@ -229,6 +229,7 @@ class _MonitorPageState extends State<MonitorPage> {
               'النموذجان: ${ready ? 'محملان محلياً' : 'لم يتم تحميلهما بعد'}',
             ),
             Text(_stage((_status['stage'] as int?) ?? 0)),
+            Text('التأكيدات المتتالية: ${_status['confirmations'] ?? 0}'),
             const SizedBox(height: 18),
             Row(
               children: [

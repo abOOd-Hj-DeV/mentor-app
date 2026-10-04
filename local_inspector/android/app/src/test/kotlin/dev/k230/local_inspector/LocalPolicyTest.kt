@@ -63,24 +63,25 @@ class LocalPolicyTest {
         val policy = LocalPolicy(10)
         policy.captureIntervalMs = 1000
         assertEquals(0, observe(policy, 0, .65f).stage)
-        assertEquals(1, observe(policy, 1000, .65f).stage)
+        assertEquals(0, observe(policy, 1000, .65f).stage)
+        assertEquals(1, observe(policy, 2000, .65f).stage)
         val explicit = LocalPolicy(10)
         explicit.captureIntervalMs = 1000
-        assertEquals(0, observe(explicit, 0, .96f).stage)
-        assertEquals(0, observe(explicit, 1000, .96f).stage)
-        assertEquals(3, observe(explicit, 2000, .96f).stage)
+        for (i in 0..3) assertEquals(0, observe(explicit, i * 1000L, .99f).stage)
+        assertEquals(3, observe(explicit, 4000, .99f).stage)
     }
     @Test fun slowCaptureStillRequiresHentaiEvidenceAndBlocksHome() {
         val policy = LocalPolicy(10)
         policy.captureIntervalMs = 3000
-        for (i in 0..1) assertEquals(0, observe(policy, i * 3000L, 0f, .99f).stage)
-        for (i in 2..5) assertEquals(2, observe(policy, i * 3000L, 0f, .99f).stage)
+        for (i in 0..3) assertEquals(0, observe(policy, i * 3000L, 0f, .99f).stage)
+        for (i in 4..7) assertEquals(2, observe(policy, i * 3000L, 0f, .99f).stage)
     }
     @Test fun capturePausesLongerThanTheConfiguredGapResetEvidence() {
         val policy = LocalPolicy(10)
         policy.captureIntervalMs = 1000
         observe(policy, 0, .65f)
         assertEquals(0, observe(policy, 4000, .65f).stage)
-        assertEquals(1, observe(policy, 5000, .65f).stage)
+        assertEquals(0, observe(policy, 5000, .65f).stage)
+        assertEquals(1, observe(policy, 6000, .65f).stage)
     }
 }

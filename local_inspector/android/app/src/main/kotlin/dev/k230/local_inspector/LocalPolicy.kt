@@ -25,7 +25,8 @@ internal class LocalPolicy(var age: Int = 10) {
     var captureIntervalMs = 334L
         set(value) { field = value.coerceAtLeast(100L) }
     private val gap get() = captureIntervalMs * 2 + 400
-    private val slow get() = captureIntervalMs >= 750
+    var confirmations = 0
+        private set
     private class Chain {
         var count = 0
         var first = -1L
@@ -48,7 +49,7 @@ internal class LocalPolicy(var age: Int = 10) {
     val shieldThreshold get() = if (age <= 12) .80f else .85f
     val homeThreshold get() = if (age <= 12) .90f else .95f
 
-    fun reset() { tracks = emptyList(); lastTime = -1 }
+    fun reset() { tracks = emptyList(); lastTime = -1; confirmations = 0 }
     fun applied(packageName: String, time: Long) {
         actions.removeAll { time - it.second >= 60_000 }
         actions.add(packageName to time)
@@ -88,9 +89,9 @@ internal class LocalPolicy(var age: Int = 10) {
             track.cover.add(eligible && score.explicit >= coverThreshold, time)
             track.shield.add(eligible && score.explicit >= shieldThreshold, time)
             track.home.add(!score.hentaiDominant && score.explicit >= homeThreshold && score.porn >= .60f, time)
-            val count = if (score.hentaiDominant) { if (slow) 3 else 5 } else { if (slow) 2 else 3 }
+            val count = if (score.hentaiDominant) 5 else 3
             val span = if (score.hentaiDominant) 1000L else 400L
-            val homeCount = if (slow) 3 else 5
+            val homeCount = 5
             var level = 0
             if (track.cover.ready(count, span, time)) level = 1
             if (track.shield.ready(count, span, time) || (level == 1 && repeated)) level = 2
@@ -101,6 +102,7 @@ internal class LocalPolicy(var age: Int = 10) {
             next.add(track)
         }
         tracks = next
+        confirmations = next.maxOfOrNull { maxOf(it.cover.count, it.shield.count, it.home.count) } ?: 0
         return if (deferred && stage < 3) Decision() else Decision(stage, covers)
     }
 }

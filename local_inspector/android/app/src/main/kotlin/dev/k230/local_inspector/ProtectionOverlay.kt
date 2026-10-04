@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.util.Log
 
 internal class ProtectionOverlay(private val service: AccessibilityService, private val home: () -> Unit) {
     private val manager = service.getSystemService(WindowManager::class.java)
@@ -63,7 +64,12 @@ internal class ProtectionOverlay(private val service: AccessibilityService, priv
         } catch (_: RuntimeException) { stage = 0; covered = emptyList(); false }
     }
     fun clear() {
-        view?.let { manager.removeView(it) }
-        view = null; stage = 0; covered = emptyList()
+        try {
+            view?.let { if (it.isAttachedToWindow) manager.removeView(it) }
+        } catch (error: RuntimeException) {
+            Log.e("LocalInspector", "Removing protection overlay failed", error)
+        } finally {
+            view = null; stage = 0; covered = emptyList()
+        }
     }
 }
