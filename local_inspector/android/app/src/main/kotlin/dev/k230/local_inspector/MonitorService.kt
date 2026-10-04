@@ -6,8 +6,8 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.Display
-import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.Executors
@@ -23,6 +23,8 @@ internal object MonitorState {
     var dropped = 0L
     var classifications = 0L
     var analysisMs = 0L
+    var intervalMs = MonitorService.INTERVAL_MS
+    var confirmations = 0
     var captureFps = 0.0
     var analysisFps = 0.0
     var lastCapture = 0L
@@ -36,8 +38,10 @@ internal object MonitorState {
         .put("enabled", MonitorService.instance != null).put("active", active).put("ready", ready)
         .put("error", error).put("captured", captured).put("analyzed", analyzed).put("dropped", dropped)
         .put("classifications", classifications).put("analysisMs", analysisMs)
-        .put("captureFps", if (active && SystemClock.uptimeMillis() - lastCapture < 1000) captureFps else 0.0)
-        .put("analysisFps", if (active && SystemClock.uptimeMillis() - lastAnalysis < 1000) analysisFps else 0.0)
+        .put("intervalMs", intervalMs)
+        .put("confirmations", confirmations)
+        .put("captureFps", if (active && SystemClock.uptimeMillis() - lastCapture < intervalMs * 3) captureFps else 0.0)
+        .put("analysisFps", if (active && SystemClock.uptimeMillis() - lastAnalysis < maxOf(intervalMs * 3, analysisMs * 2)) analysisFps else 0.0)
         .put("age", age).put("stage", stage)
         .put("package", packageName).put("events", JSONArray(events.toList()))
         .put("scores", scores?.let { JSONObject().put("Drawing", it.drawing).put("Hentai", it.hentai)
@@ -49,7 +53,8 @@ class MonitorService : AccessibilityService() {
     companion object {
         var instance: MonitorService? = null
             private set
-        const val INTERVAL_MS = 334L
+        const val INTERVAL_MS = 1000L
+        const val MAX_INTERVAL_MS = 3000L
     }
     private data class Frame(val bitmap: Bitmap, val timestamp: Long, val generation: Long, val packageName: String)
     private val main = Handler(Looper.getMainLooper())
@@ -61,30 +66,54 @@ class MonitorService : AccessibilityService() {
     private var pending: Frame? = null
     private var busy = false
     private var capturePending = false
+    private var captureToken = 0L
+    private var captureStartedAt = 0L
     private var generation = 0L
     private var foreground = ""
     private var destroyed = false
-    private var episodeApplied = false
     private val captureTimes = ArrayDeque<Long>()
     private val analysisTimes = ArrayDeque<Long>()
+    private var interval = INTERVAL_MS
+    private var failures = 0
+    private var retryAt = 0L
+    private var loadRetryAt = 0L
     private val tick = object : Runnable {
         override fun run() {
             if (!MonitorState.active) return
-            main.postDelayed(this, INTERVAL_MS)
-            if (!MonitorState.ready || capturePending || overlay.stage >= 2) return
+            main.postDelayed(this, interval)
+            try { capture() } catch (error: Throwable) {
+                capturePending = false
+                slowDown()
+                retryAt = SystemClock.uptimeMillis() + interval
+                policy.reset(); MonitorState.confirmations = 0
+                Log.e("LocalInspector", "Capture scheduling failed", error)
+                MonitorState.error = "تعذر طلب لقطة الشاشة (${error.javaClass.simpleName})؛ ستتم المحاولة مجدداً"
+            }
+        }
+    }
+    private fun capture() {
+            if (!MonitorState.ready) { loadModels(); return }
+            if (SystemClock.uptimeMillis() < retryAt) return
+            if (capturePending) {
+                if (SystemClock.uptimeMillis() - captureStartedAt < 10_000) return
+                capturePending = false; captureToken++
+                generation++; policy.reset(); MonitorState.confirmations = 0
+                MonitorState.error = "تأخر رد التقاط الشاشة؛ إعادة المحاولة تلقائياً"
+            }
             val app = applicationPackage()
             if (app.isEmpty() || app == packageName || app == homePackage()) return
             if (app != foreground) changed(app)
             capturePending = true
+            captureStartedAt = SystemClock.uptimeMillis()
+            val token = ++captureToken
             val epoch = generation
             val target = foreground
-            try {
             takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
                 override fun onSuccess(screenshot: ScreenshotResult) {
-                    capturePending = false
                     val buffer = screenshot.hardwareBuffer
                     try {
-                        if (!MonitorState.active || destroyed || epoch != generation) return
+                        if (token == captureToken) capturePending = false
+                        if (!MonitorState.active || destroyed) return
                         val hardware = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
                             ?: throw IllegalStateException("screenshot_buffer")
                         val bitmap = try { hardware.copy(Bitmap.Config.ARGB_8888, false) } finally { hardware.recycle() }
@@ -96,45 +125,76 @@ class MonitorService : AccessibilityService() {
                         if (pending != null) { pending?.bitmap?.recycle(); MonitorState.dropped++ }
                         pending = Frame(bitmap, screenshot.timestamp, epoch, target)
                         processLatest()
-                    } catch (_: Exception) { MonitorState.error = "تعذر تجهيز لقطة الشاشة" }
+                    } catch (error: Throwable) {
+                        slowDown()
+                        retryAt = SystemClock.uptimeMillis() + interval
+                        policy.reset(); MonitorState.confirmations = 0
+                        Log.e("LocalInspector", "Screenshot preparation failed", error)
+                        MonitorState.error = "تعذر تجهيز لقطة الشاشة (${error.javaClass.simpleName})؛ ستتم المحاولة مجدداً"
+                    }
                     finally { buffer.close() }
                 }
                 override fun onFailure(errorCode: Int) {
+                    if (token != captureToken) return
                     capturePending = false
                     if (!MonitorState.active || epoch != generation) return
-                    MonitorState.error = when (errorCode) {
-                        ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> "رفض Android سرعة الالتقاط؛ ستتم المحاولة مجدداً"
-                        ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS -> "فعّل خدمة إمكانية الوصول"
-                        else -> "تعذر التقاط الشاشة ($errorCode)؛ الشاشات المحمية غير قابلة للتحليل"
+                    when (errorCode) {
+                        ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> {
+                            slowDown()
+                            MonitorState.error = "خُفّض معدل الالتقاط إلى لقطة كل ${interval} ms بطلب Android"
+                        }
+                        ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS -> {
+                            policy.reset(); MonitorState.confirmations = 0
+                            MonitorState.error = "فعّل خدمة إمكانية الوصول"
+                        }
+                        else -> {
+                            policy.reset(); MonitorState.confirmations = 0
+                            MonitorState.error = "تعذر التقاط الشاشة ($errorCode)؛ الشاشات المحمية غير قابلة للتحليل"
+                        }
                     }
-                    policy.reset()
                 }
             })
-            } catch (_: RuntimeException) {
-                capturePending = false
-                MonitorState.error = "تعذر طلب لقطة الشاشة؛ تحقق من خدمة إمكانية الوصول"
-                policy.reset()
-            }
-        }
+    }
+    private fun slowDown() {
+        if (interval >= MAX_INTERVAL_MS) return
+        interval = (interval + 250).coerceAtMost(MAX_INTERVAL_MS)
+        policy.captureIntervalMs = interval
+        MonitorState.intervalMs = interval
     }
 
     override fun onServiceConnected() {
         instance = this
-        overlay = ProtectionOverlay(this) { home(false) }
+        overlay = ProtectionOverlay(this) {
+            try { home(false) } catch (error: Throwable) {
+                Log.e("LocalInspector", "Manual HOME failed", error)
+                MonitorState.error = "تعذر HOME؛ الحماية مستمرة"
+            }
+        }
         MonitorState.age = getSharedPreferences("local", MODE_PRIVATE).getInt("age", 10)
     }
     internal fun start(age: Int) {
         require(age in 10..15)
         if (MonitorState.active) return
         policy.age = age
+        interval = INTERVAL_MS
+        failures = 0
+        retryAt = 0
+        loadRetryAt = 0
+        policy.captureIntervalMs = interval
+        MonitorState.intervalMs = interval
         MonitorState.age = age
         getSharedPreferences("local", MODE_PRIVATE).edit().putInt("age", age).apply()
         generation++; policy.reset()
+        MonitorState.confirmations = 0
         MonitorState.active = true; MonitorState.error = ""
-        if (pipeline != null) { MonitorState.ready = true; main.post(tick); return }
-        if (loading) return
+        MonitorState.ready = pipeline != null
+        main.removeCallbacks(tick)
+        main.post(tick)
+    }
+    private fun loadModels() {
+        if (loading || destroyed || !MonitorState.active || SystemClock.uptimeMillis() < loadRetryAt) return
         loading = true
-        worker.execute {
+        try { worker.execute {
             try {
                 val loaded = ModelPipeline(this)
                 pipeline = loaded
@@ -142,99 +202,130 @@ class MonitorService : AccessibilityService() {
                     loading = false
                     if (!destroyed) {
                         MonitorState.ready = true
-                        if (MonitorState.active) main.post(tick)
+                        MonitorState.error = ""
                     }
                 }
-            } catch (_: Exception) {
-                main.post {
-                    loading = false
-                    if (!destroyed) { MonitorState.error = "فشل تحميل النموذجين المحليين؛ لم يبدأ التحليل"; stop() }
-                }
+            } catch (error: Exception) {
+                modelLoadFailed(error)
+            } catch (error: LinkageError) {
+                modelLoadFailed(error)
+            } catch (error: OutOfMemoryError) {
+                modelLoadFailed(error)
+            }
+        } } catch (error: Throwable) {
+            modelLoadFailed(error)
+        }
+    }
+    private fun modelLoadFailed(error: Throwable) {
+        Log.e("LocalInspector", "Local model initialization failed", error)
+        main.post {
+            loading = false
+            if (!destroyed) {
+                MonitorState.ready = false
+                loadRetryAt = SystemClock.uptimeMillis() + 5000
+                MonitorState.error = "فشل تحميل النموذجين المحليين (${error.javaClass.simpleName})؛ إعادة المحاولة بعد 5 ثوان"
             }
         }
     }
     internal fun stop() {
         MonitorState.active = false; main.removeCallbacks(tick)
         generation++; policy.reset()
+        MonitorState.confirmations = 0
         pending?.bitmap?.recycle(); pending = null
-        overlay.clear(); MonitorState.stage = 0; episodeApplied = false
+        overlay.clear(); MonitorState.stage = 0
     }
     private fun rate(times: ArrayDeque<Long>, now: Long) {
         times.addLast(now)
         while (times.isNotEmpty() && now - times.first() >= 3000) times.removeFirst()
     }
     private fun processLatest() {
-        if (busy || !MonitorState.active) return
+        if (busy || !MonitorState.active || destroyed || SystemClock.uptimeMillis() < retryAt) return
         val frame = pending ?: return
         pending = null
-        if (SystemClock.uptimeMillis() - frame.timestamp > 750) {
-            frame.bitmap.recycle(); MonitorState.dropped++; return
-        }
         busy = true
+        try {
         worker.execute {
             val start = SystemClock.uptimeMillis()
             try {
                 val observations = requireNotNull(pipeline).analyze(frame.bitmap)
-                val width = frame.bitmap.width; val height = frame.bitmap.height
                 val duration = SystemClock.uptimeMillis() - start
                 main.post {
-                    if (!destroyed && MonitorState.active && frame.generation == generation) {
+                    try {
+                    if (!destroyed && MonitorState.active) {
                         MonitorState.analyzed++; MonitorState.classifications += observations.size
                         MonitorState.lastAnalysis = SystemClock.uptimeMillis()
                         MonitorState.analysisMs = duration
                         rate(analysisTimes, SystemClock.uptimeMillis())
                         MonitorState.analysisFps = analysisTimes.size / 3.0
                         MonitorState.scores = observations.maxByOrNull { it.scores.explicit }?.scores
-                        val bounds = getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
-                        if (SystemClock.uptimeMillis() - frame.timestamp <= 750 && bounds.width() == width &&
-                            bounds.height() == height && applicationPackage() == frame.packageName) {
-                            val unmasked = observations.filter { o -> overlay.covered.none { it.overlap(o.region) > 0 } }
-                            val decision = policy.evaluate(unmasked, frame.timestamp, frame.packageName, width, height)
-                            apply(decision)
-                            MonitorState.error = ""
-                        } else {
-                            policy.reset(); MonitorState.dropped++
-                            MonitorState.error = "لم ينفذ قرار قديم: تأخر التحليل أو تغيرت الشاشة"
-                        }
+                        val decision = policy.evaluateImmediate(observations)
+                        MonitorState.confirmations = policy.confirmations
+                        failures = 0
+                        MonitorState.error = ""
+                        Log.d("LocalInspector", "Analysis=${duration}ms regions=${observations.size} " +
+                            "porn=${MonitorState.scores?.porn} explicit=${MonitorState.scores?.explicit} " +
+                            "frameAge=${SystemClock.uptimeMillis() - frame.timestamp}ms " +
+                            "decision=${decision.stage} package=${frame.packageName}")
+                        apply(decision)
                     }
-                    busy = false
-                    processLatest()
-                }
-            } catch (_: Exception) {
-                main.post {
-                    busy = false
-                    if (!destroyed && frame.generation == generation) {
-                        MonitorState.error = "فشل التحليل؛ أوقف الحماية وأعد تشغيلها"
-                        MonitorState.active = false
-                        main.removeCallbacks(tick)
-                        generation++; policy.reset()
-                        pending?.bitmap?.recycle(); pending = null
+                    } catch (error: Throwable) {
+                        recordAnalysisFailure(duration, error)
+                    } finally {
+                        busy = false
+                        processLatest()
                     }
                 }
+            } catch (error: Exception) {
+                analysisFailed(frame, start, error)
+            } catch (error: LinkageError) {
+                analysisFailed(frame, start, error)
+            } catch (error: OutOfMemoryError) {
+                analysisFailed(frame, start, error)
             } finally { frame.bitmap.recycle() }
         }
+        } catch (error: Throwable) {
+            frame.bitmap.recycle()
+            busy = false
+            recordAnalysisFailure(0, error)
+        }
     }
-    private fun apply(decision: Decision) {
+    private fun analysisFailed(frame: Frame, start: Long, error: Throwable) {
+        val duration = SystemClock.uptimeMillis() - start
+        main.post {
+            busy = false
+            if (!destroyed && MonitorState.active && frame.generation == generation)
+                recordAnalysisFailure(duration, error)
+            if (MonitorState.active) processLatest()
+        }
+    }
+    private fun recordAnalysisFailure(duration: Long, error: Throwable) {
+        Log.e("LocalInspector", "Screen analysis failed after ${duration}ms", error)
+        failures++
+        val detail = error.message?.replace('\n', ' ')?.take(200) ?: "خطأ بدون تفاصيل"
+        MonitorState.analysisMs = duration
+        MonitorState.error = "فشل تحليل لقطة ×$failures (${error.javaClass.simpleName}): $detail؛ إعادة المحاولة تلقائياً"
+        retryAt = SystemClock.uptimeMillis() + (interval * failures).coerceAtMost(30_000)
+        policy.reset()
+        MonitorState.confirmations = 0
+        pending?.bitmap?.recycle(); pending = null
+    }
+    internal fun apply(decision: Decision) {
         if (decision.stage == 0) return
-        if (decision.stage == 3) { home(true); return }
-        if (decision.stage < overlay.stage) return
-        if (overlay.show(decision)) {
-            MonitorState.stage = overlay.stage
-            if (!episodeApplied) {
-                episodeApplied = true
-                policy.applied(foreground, SystemClock.uptimeMillis())
-                event(if (decision.stage == 1) "تغطية منطقة الصورة" else "حاجب كامل", decision.stage)
-            }
-        } else { MonitorState.error = "تعذر عرض الحاجب"; MonitorState.stage = 0 }
+        try {
+            home(true)
+        } catch (error: Throwable) {
+            Log.e("LocalInspector", "Applying verdict stage ${decision.stage} failed", error)
+            MonitorState.error = "تعذر تنفيذ الإجراء (${error.javaClass.simpleName})؛ الحماية مستمرة"
+        }
     }
     private fun home(automatic: Boolean) {
         if (performGlobalAction(GLOBAL_ACTION_HOME)) {
-            event(if (automatic) "طلب HOME بعد تأكيد Porn" else "طلب HOME من زر الحاجب", 3)
+            event(if (automatic) "طلب HOME فور تصنيف محتوى حساس" else "طلب HOME يدوي", 3)
             overlay.clear(); MonitorState.stage = 3
             generation++; policy.reset()
         } else {
-            overlay.show(Decision(2))
-            MonitorState.stage = 2; MonitorState.error = "تعذر HOME؛ الحاجب مستمر"
+            MonitorState.stage = 0
+            MonitorState.error = "تعذر HOME؛ ستتم المحاولة عند التصنيف الحساس التالي"
         }
     }
     private fun event(action: String, stage: Int) {
@@ -251,20 +342,27 @@ class MonitorService : AccessibilityService() {
         .resolveActivity(packageManager)?.packageName ?: ""
     private fun changed(app: String) {
         generation++; policy.reset()
+        MonitorState.confirmations = 0
         foreground = app; MonitorState.packageName = app
-        pending?.bitmap?.recycle(); pending = null
-        overlay.clear(); MonitorState.stage = 0; episodeApplied = false
+        overlay.clear(); MonitorState.stage = 0
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!MonitorState.active || event == null) return
-        val app = applicationPackage()
-        if (app.isNotEmpty() && app != foreground) changed(app)
-        else if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && overlay.stage < 2) {
-            generation++; policy.reset()
-            overlay.clear(); MonitorState.stage = 0; episodeApplied = false
+        try {
+            val app = applicationPackage()
+            if (app.isNotEmpty() && app != foreground) changed(app)
+            else if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && overlay.stage < 2) {
+                generation++; policy.reset(); MonitorState.confirmations = 0
+                overlay.clear(); MonitorState.stage = 0
+            }
+        } catch (error: Throwable) {
+            Log.e("LocalInspector", "Accessibility event handling failed", error)
         }
     }
-    override fun onInterrupt() { if (::overlay.isInitialized) stop() }
+    override fun onInterrupt() {
+        policy.reset(); MonitorState.confirmations = 0
+        MonitorState.error = "قوطعت خدمة إمكانية الوصول؛ إعادة المحاولة تلقائياً"
+    }
     override fun onDestroy() {
         if (::overlay.isInitialized) stop()
         destroyed = true; instance = null; MonitorState.ready = false
