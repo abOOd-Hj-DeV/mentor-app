@@ -88,7 +88,6 @@ internal class RemoteConnection(
                         while (open.get()) {
                             val packet = queue.take()
                             write(output, packet)
-                            if (packet.type == 2) frameQueued.set(false)
                         }
                     } catch (_: Exception) { fail() }
                 }, "remote-tls-write").start()
@@ -96,8 +95,9 @@ internal class RemoteConnection(
                 while (open.get()) {
                     val type = input.readUnsignedByte()
                     val size = input.readInt()
-                    if (type == 3) {
+                    if (type == 3 || type == 5) {
                         requireProtocol(size == 1 && input.readUnsignedByte() == 1)
+                        if (type == 5) frameQueued.set(false)
                         continue
                     }
                     if (type == 4) {
