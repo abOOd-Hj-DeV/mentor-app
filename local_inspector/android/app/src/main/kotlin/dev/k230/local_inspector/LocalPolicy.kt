@@ -22,6 +22,10 @@ internal data class Observation(val region: Region, val scores: Scores)
 internal data class Decision(val stage: Int = 0, val regions: List<Region> = emptyList())
 
 internal class LocalPolicy(var age: Int = 10) {
+    var captureIntervalMs = 334L
+        set(value) { field = value.coerceAtLeast(100L) }
+    private val gap get() = captureIntervalMs * 2 + 400
+    private val slow get() = captureIntervalMs >= 750
     private class Chain {
         var count = 0
         var first = -1L
@@ -52,7 +56,7 @@ internal class LocalPolicy(var age: Int = 10) {
     fun evaluate(observations: List<Observation>, time: Long, packageName: String, width: Int, height: Int): Decision {
         require(age in 10..15)
         if (time <= lastTime) return Decision()
-        if (lastTime >= 0 && time - lastTime > 500) tracks = emptyList()
+        if (lastTime >= 0 && time - lastTime > gap) tracks = emptyList()
         lastTime = time
         val used = mutableSetOf<Track>()
         val next = mutableListOf<Track>()
@@ -84,13 +88,15 @@ internal class LocalPolicy(var age: Int = 10) {
             track.cover.add(eligible && score.explicit >= coverThreshold, time)
             track.shield.add(eligible && score.explicit >= shieldThreshold, time)
             track.home.add(!score.hentaiDominant && score.explicit >= homeThreshold && score.porn >= .60f, time)
-            val count = if (score.hentaiDominant) 5 else 3
+            val count = if (score.hentaiDominant) { if (slow) 3 else 5 } else { if (slow) 2 else 3 }
             val span = if (score.hentaiDominant) 1000L else 400L
+            val homeCount = if (slow) 3 else 5
             var level = 0
             if (track.cover.ready(count, span, time)) level = 1
             if (track.shield.ready(count, span, time) || (level == 1 && repeated)) level = 2
-            if (track.home.ready(5, 1000, time)) level = 3
-            if (level < 3 && track.home.count > 0 && time - track.home.first < 2000) deferred = true
+            if (track.home.ready(homeCount, 1000, time)) level = 3
+            if (level < 3 && track.home.count > 0 && track.home.count < homeCount &&
+                time - track.home.first < gap * homeCount) deferred = true
             if (level > 0) { covers.add(r); stage = max(stage, level) }
             next.add(track)
         }

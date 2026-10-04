@@ -243,8 +243,9 @@ class _MonitorPageState extends State<MonitorPage> {
             ),
             Text('عدد تصنيفات NSFWJS: ${_status['classifications'] ?? 0}'),
             const SizedBox(height: 8),
-            const Text(
-              'المستهدف نحو 3 لقطات/ثانية. المعدل الفعلي يعتمد على الهاتف وعدد المناطق؛ تُتجاوز اللقطات القديمة عند البطء.',
+            Text(
+              'الفاصل الحالي ${_status['intervalMs'] ?? 1000} ms، ويتباطأ تلقائياً إذا رفض Android سرعة الالتقاط. '
+              'فشل لقطة أو تحليلها يُعرض هنا ولا يوقف الحماية.',
             ),
             if (error.isNotEmpty)
               Padding(
