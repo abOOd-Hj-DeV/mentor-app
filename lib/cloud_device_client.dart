@@ -153,9 +153,7 @@ class CloudDeviceClient {
   }) async {
     final cleanCategory = category.trim();
     if (cleanCategory.isEmpty || cleanCategory.length > 80) {
-      throw const FormatException(
-        'تصنيف الحدث مطلوب وبحد أقصى 80 حرفاً.',
-      );
+      throw const FormatException('تصنيف الحدث مطلوب وبحد أقصى 80 حرفاً.');
     }
     if (!const {'warn', 'block', 'log'}.contains(action)) {
       throw const FormatException('نوع الحدث غير صالح.');
