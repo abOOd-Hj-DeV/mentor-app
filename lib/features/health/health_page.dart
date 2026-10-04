@@ -78,7 +78,7 @@ class HealthPage extends StatelessWidget {
                     'legacy' => 'قناة قديمة · تشخيص فقط',
                     _ => 'غير متصل',
                   },
-                  'يتطلب K230 وUSB؛ وجود الكابل وحده لا يثبت اتصال القناة.',
+                  'تعمل قناة v2 عبر ADB وscrcpy، باستخدام USB أو اتصال شبكي مصرح؛ الاتصال وحده لا يثبت تنفيذ الحماية.',
                   health?.companion == 'connected',
                 ),
                 _healthCard(
