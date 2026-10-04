@@ -49,6 +49,13 @@ internal class LocalPolicy(var age: Int = 10) {
     val shieldThreshold get() = if (age <= 12) .80f else .85f
     val homeThreshold get() = if (age <= 12) .90f else .95f
 
+    fun evaluateImmediate(observations: List<Observation>): Decision {
+        require(age in 10..15)
+        val sensitive = observations.filter { it.scores.explicit >= coverThreshold }
+        confirmations = if (sensitive.isEmpty()) 0 else 1
+        return if (sensitive.isEmpty()) Decision() else Decision(3)
+    }
+
     fun reset() { tracks = emptyList(); lastTime = -1; confirmations = 0 }
     fun applied(packageName: String, time: Long) {
         actions.removeAll { time - it.second >= 60_000 }
