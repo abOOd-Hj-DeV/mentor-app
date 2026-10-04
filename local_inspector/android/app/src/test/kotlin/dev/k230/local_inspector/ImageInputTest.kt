@@ -33,4 +33,19 @@ class ImageInputTest {
         val output = FloatArray(25 * 8400); output[4 * 8400] = Float.NaN
         assertThrows(IllegalArgumentException::class.java) { ImageInput.regions(output, 640, 640) }
     }
+    @Test fun armSigmoidRoundoffDoesNotStopMediaDetection() {
+        val output = FloatArray(25 * 8400)
+        output[4 * 8400 + 1] = -1.1920929e-7f
+        output[0] = 320f; output[8400] = 320f
+        output[16800] = 200f; output[25200] = 160f
+        output[13 * 8400] = 1.0000001f
+        assertEquals(listOf(Region(220, 240, 200, 160)), ImageInput.regions(output, 640, 640))
+    }
+    @Test fun materiallyInvalidProbabilitiesAreStillRejected() {
+        for (value in listOf(-.001f, 1.001f, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+            val output = FloatArray(25 * 8400)
+            output[4 * 8400] = value
+            assertThrows(IllegalArgumentException::class.java) { ImageInput.regions(output, 640, 640) }
+        }
+    }
 }

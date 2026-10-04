@@ -213,18 +213,26 @@ class MonitorService : AccessibilityService() {
                     busy = false
                     processLatest()
                 }
-            } catch (_: Exception) {
-                main.post {
-                    busy = false
-                    if (!destroyed && frame.generation == generation) {
-                        MonitorState.error = "فشل التحليل؛ أوقف الحماية وأعد تشغيلها"
-                        MonitorState.active = false
-                        main.removeCallbacks(tick)
-                        generation++; policy.reset()
-                        pending?.bitmap?.recycle(); pending = null
-                    }
-                }
+            } catch (error: Exception) {
+                analysisFailed(frame, start, error)
+            } catch (error: LinkageError) {
+                analysisFailed(frame, start, error)
+            } catch (error: OutOfMemoryError) {
+                analysisFailed(frame, start, error)
             } finally { frame.bitmap.recycle() }
+        }
+    }
+    private fun analysisFailed(frame: Frame, start: Long, error: Throwable) {
+        val duration = SystemClock.uptimeMillis() - start
+        Log.e("LocalInspector", "Screen analysis failed after ${duration}ms", error)
+        main.post {
+            busy = false
+            if (!destroyed && frame.generation == generation) {
+                val detail = error.message?.replace('\n', ' ')?.take(200) ?: "خطأ بدون تفاصيل"
+                MonitorState.analysisMs = duration
+                MonitorState.error = "فشل التحليل (${error.javaClass.simpleName}): $detail"
+                stop()
+            }
         }
     }
     private fun apply(decision: Decision) {

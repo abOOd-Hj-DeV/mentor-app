@@ -59,8 +59,9 @@ internal object ImageInput {
         for (i in 0 until 8400) {
             var confidence = 0f; var label = -1
             for (c in 0 until 21) {
-                val score = output[(4 + c) * 8400 + i]
-                require(score.isFinite() && score in 0f..1f) { "invalid_ui_scores" }
+                val rawScore = output[(4 + c) * 8400 + i]
+                require(rawScore.isFinite() && rawScore in -1e-6f..1.000001f) { "invalid_ui_scores: $rawScore" }
+                val score = rawScore.coerceIn(0f, 1f)
                 if (score > confidence) { confidence = score; label = c }
             }
             if (confidence < .25f || (label != 0 && label != 9)) continue
