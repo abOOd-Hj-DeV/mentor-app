@@ -22,5 +22,26 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.k230.mentor/cloud")
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "saveCredentials" -> {
+                            val values = call.arguments as? Map<*, *>
+                                ?: error("Credential data is missing")
+                            CloudCredentialStore.save(this, values)
+                            result.success(null)
+                        }
+                        "loadCredentials" -> result.success(CloudCredentialStore.load(this))
+                        "clearCredentials" -> {
+                            CloudCredentialStore.clear(this)
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (error: Exception) {
+                    result.error("CLOUD_CREDENTIALS", error.message, null)
+                }
+            }
     }
 }
