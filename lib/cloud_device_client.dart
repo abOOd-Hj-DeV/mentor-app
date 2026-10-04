@@ -136,16 +136,43 @@ class CloudDeviceClient {
   }
 
   static Future<void> sendTestEvent(CloudDeviceCredentials credentials) async {
+    await sendEvent(
+      credentials,
+      category: 'device_test',
+      action: 'log',
+      confidence: 1,
+    );
+  }
+
+  static Future<void> sendEvent(
+    CloudDeviceCredentials credentials, {
+    required String category,
+    required String action,
+    required double confidence,
+    DateTime? occurredAt,
+  }) async {
+    final cleanCategory = category.trim();
+    if (cleanCategory.isEmpty || cleanCategory.length > 80) {
+      throw const FormatException(
+        'تصنيف الحدث مطلوب وبحد أقصى 80 حرفاً.',
+      );
+    }
+    if (!const {'warn', 'block', 'log'}.contains(action)) {
+      throw const FormatException('نوع الحدث غير صالح.');
+    }
+    if (!confidence.isFinite || confidence < 0 || confidence > 1) {
+      throw const FormatException('قيمة الثقة يجب أن تكون بين 0 و1.');
+    }
     await _request(
       parseServerUrl(credentials.serverUrl),
       '/devices/${Uri.encodeComponent(credentials.deviceId)}/events',
       method: 'POST',
       token: credentials.deviceToken,
       body: {
-        'category': 'device_test',
-        'action': 'log',
-        'confidence': 1,
-        'occurredAt': DateTime.now().toUtc().toIso8601String(),
+        'category': cleanCategory,
+        'action': action,
+        'confidence': confidence,
+        'occurredAt': (occurredAt ?? DateTime.now()).toUtc().toIso8601String(),
       },
     );
   }
