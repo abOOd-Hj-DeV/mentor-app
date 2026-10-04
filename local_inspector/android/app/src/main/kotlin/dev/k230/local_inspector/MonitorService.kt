@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -145,11 +146,23 @@ class MonitorService : AccessibilityService() {
                         if (MonitorState.active) main.post(tick)
                     }
                 }
-            } catch (_: Exception) {
-                main.post {
-                    loading = false
-                    if (!destroyed) { MonitorState.error = "فشل تحميل النموذجين المحليين؛ لم يبدأ التحليل"; stop() }
-                }
+            } catch (error: Exception) {
+                modelLoadFailed(error)
+            } catch (error: LinkageError) {
+                modelLoadFailed(error)
+            } catch (error: OutOfMemoryError) {
+                modelLoadFailed(error)
+            }
+        }
+    }
+    private fun modelLoadFailed(error: Throwable) {
+        Log.e("LocalInspector", "Local model initialization failed", error)
+        main.post {
+            loading = false
+            if (!destroyed) {
+                MonitorState.ready = false
+                MonitorState.error = "فشل تحميل النموذجين المحليين (${error.javaClass.simpleName})؛ لم يبدأ التحليل"
+                stop()
             }
         }
     }

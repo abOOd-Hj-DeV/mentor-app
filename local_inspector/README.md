@@ -72,6 +72,34 @@ Release لا يطلب INTERNET. لا صور أو صوت أو نصوص محادث
 
 Flutter 3.44.2 / Dart 3.12.2، JDK 17، Android SDK، Gradle wrapper.
 
+### التشغيل بوضع Debug
+
+فعّل USB debugging على الهاتف، وصله بالحاسوب، ووافق على بصمة اتصال USB:
+
+```sh
+cd local_inspector
+flutter pub get
+flutter devices
+flutter run --debug -d <DEVICE_ID>
+```
+
+استبدل `<DEVICE_ID>` بمعرّف الهاتف الظاهر في `flutter devices`.
+بعد التشغيل فعّل خدمة «حماية محلية» يدوياً واختر العمر ووافق على الالتقاط.
+إذا رفض التثبيت بسبب اختلاف التوقيع، احذف نسخة الاختبار القديمة ثم أعد الأمر؛
+ذلك يمسح العمر المحفوظ ويحتاج تفعيل خدمة إمكانية الوصول مجدداً.
+
+لفحص خطأ بدء الحماية احتفظ بالطرفية مفتوحة، أو شغّل:
+
+```sh
+adb -s <DEVICE_ID> logcat -v time LocalInspector:E AndroidRuntime:E '*:S'
+```
+
+Release يحتفظ بأسماء أصناف ONNX Runtime وأعضائها اللازمة لنداءات JNI؛
+إزالة هذه الأصناف أو إعادة تسميتها بواسطة R8 تمنع تحميل النماذج.
+مرجع ONNX Runtime: https://onnxruntime.ai/docs/get-started/with-mobile.html
+
+### الفحوص
+
 ```sh
 flutter pub get
 flutter analyze
