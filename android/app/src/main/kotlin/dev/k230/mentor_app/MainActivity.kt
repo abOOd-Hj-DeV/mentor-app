@@ -20,6 +20,19 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         protectionChannel = ProtectionChannel(this, flutterEngine.dartExecutor.binaryMessenger)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.k230.mentor/mvp")
+            .setMethodCallHandler { call, result ->
+                val metrics = MvpMetrics(this)
+                when (call.method) {
+                    "summary" -> result.success(metrics.summary() + mapOf("accessibility" to (LayoutService.instance != null)))
+                    "setRole" -> {
+                        val role = call.argument<String>("role")
+                        if (role != "child" && role != "guardian") result.error("invalid_role", null, null)
+                        else { metrics.setRole(role); result.success(null) }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.k230.mentor/layout")
             .setMethodCallHandler { call, result ->
                 when (call.method) {

@@ -31,6 +31,26 @@ internal class AccessibilityOverlayController(
     private var suspended = false
     private var helpPanel: LinearLayout? = null
     private var helpScanner: DecoratedBarcodeView? = null
+    private var mvpView: View? = null
+    val mvpVisible: Boolean get() = mvpView?.isAttachedToWindow == true
+
+    fun showMvpBreak(reason: String): Boolean = try {
+        mvpView?.let { if (it.isAttachedToWindow) manager.removeViewImmediate(it) }
+        lateinit var view: View
+        view = dev.k230.mentor_app.MvpInterventionView.create(service, reason) {
+            if (view.isAttachedToWindow) manager.removeViewImmediate(view)
+            if (mvpView === view) mvpView = null
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_SECURE,
+            android.graphics.PixelFormat.OPAQUE,
+        ).apply { gravity = Gravity.TOP or Gravity.LEFT }
+        manager.addView(view, params)
+        mvpView = view
+        true
+    } catch (_: Exception) { false }
 
     fun cover(rects: List<PixelRect>, screen: ScreenSnapshot, done: (Result<List<PixelRect>>) -> Unit) {
         val complete = try {
@@ -201,6 +221,7 @@ internal class AccessibilityOverlayController(
         suspended = locked
         if (locked) helpScanner?.pause()
         installed.forEach { it.view.visibility = if (locked) View.GONE else View.VISIBLE }
+        mvpView?.visibility = if (locked) View.GONE else View.VISIBLE
     }
     fun clear() {
         transaction++
@@ -208,5 +229,7 @@ internal class AccessibilityOverlayController(
         installed.clear()
         helpScanner?.pause(); helpScanner = null
         helpPanel = null
+        mvpView?.let { if (it.isAttachedToWindow) manager.removeViewImmediate(it) }
+        mvpView = null
     }
 }

@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'dart:async';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../features/child/child_page.dart';
 import '../features/diagnostics/layout_page.dart';
 import '../features/guardian/guardian_page.dart';
-import '../features/health/health_page.dart';
+import '../features/shared/mvp_pages.dart';
 import '../features/incidents/incidents_page.dart';
 import '../features/pairing/pairing_page.dart';
-import '../features/setup/setup_page.dart';
 import '../features/shared/widgets.dart';
 import '../protection/controller.dart';
 import '../protection/models.dart';
@@ -40,8 +41,13 @@ class MentorShell extends StatefulWidget {
 class _MentorShellState extends State<MentorShell> with WidgetsBindingObserver {
   late final ProtectionController _controller;
   MentorView _view = MentorView.home;
-  String? _choice;
+  final String? _choice = null;
   Incident? _incident;
+  static const _mvpChannel = MethodChannel('dev.k230.mentor/mvp');
+  Map<String, dynamic> _mvpSummary = {};
+  String? _mvpRole;
+  bool _mvpLoaded = false;
+  Timer? _mvpRefresh;
   @override
   void initState() {
     super.initState();
@@ -51,6 +57,41 @@ class _MentorShellState extends State<MentorShell> with WidgetsBindingObserver {
     );
     _controller.addListener(_changed);
     _controller.start();
+    _refreshMvp();
+    _mvpRefresh = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _refreshMvp(),
+    );
+  }
+
+  Future<void> _refreshMvp() async {
+    try {
+      final value = await _mvpChannel.invokeMapMethod<String, dynamic>(
+        'summary',
+      );
+      if (mounted) {
+        setState(() {
+          _mvpSummary = value ?? {};
+          _mvpRole = value?['role'] as String?;
+          _mvpLoaded = true;
+        });
+      }
+    } on MissingPluginException {
+      if (mounted) setState(() => _mvpLoaded = true);
+    } on PlatformException {
+      // The last received report stays visible during a transient native error.
+    }
+  }
+
+  Future<void> _selectRole(String role) async {
+    try {
+      await _mvpChannel.invokeMethod<void>('setRole', {'role': role});
+      await _refreshMvp();
+    } on PlatformException {
+      if (mounted) setState(() => _mvpSummary['roleError'] = true);
+    } on MissingPluginException {
+      if (mounted) setState(() => _mvpSummary['roleError'] = true);
+    }
   }
 
   void _changed() {
@@ -69,6 +110,7 @@ class _MentorShellState extends State<MentorShell> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _mvpRefresh?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_changed);
     _controller.dispose();
@@ -94,6 +136,23 @@ class _MentorShellState extends State<MentorShell> with WidgetsBindingObserver {
 
   Widget _page() {
     final state = _controller.state;
+    if (_mvpRole == 'child') {
+      return state?.activeProtection != null
+          ? ChildPage(controller: _controller)
+          : MvpChildPage(
+              controller: _controller,
+              accessibility: _mvpSummary['accessibility'] == true,
+            );
+    }
+    if (_mvpRole == 'guardian') {
+      return MvpGuardianPage(summary: _mvpSummary, onRefresh: _refreshMvp);
+    }
+    if (_mvpLoaded) {
+      return MvpStartPage(
+        onRole: _selectRole,
+        error: _mvpSummary['roleError'] == true,
+      );
+    }
     if (_controller.loading) {
       return const Center(
         child: CircularProgressIndicator(
@@ -104,56 +163,46 @@ class _MentorShellState extends State<MentorShell> with WidgetsBindingObserver {
     if (_view == MentorView.pairing) {
       return PairingPage(controller: _controller, choice: _choice);
     }
-    if (state?.role == 'child') return ChildPage(controller: _controller);
+    if (state?.role == 'child') {
+      return state?.activeProtection != null
+          ? ChildPage(controller: _controller)
+          : MvpChildPage(controller: _controller);
+    }
     if (state?.role == 'guardian') {
       return switch (_view) {
         MentorView.inbox => IncidentsPage(
           controller: _controller,
           onOpen: _openIncident,
         ),
-        MentorView.settings => GuardianPage(
-          controller: _controller,
-          onPairing: () => _go(MentorView.pairing),
-          onDiagnostics: _diagnostics,
-        ),
         MentorView.incident =>
           _incident == null
               ? GuardianGate(controller: _controller)
               : IncidentDetails(controller: _controller, incident: _incident!),
-        _ => HealthPage(
-          controller: _controller,
-          onPairing: () => _go(MentorView.pairing),
-        ),
+        _ => const Center(child: CircularProgressIndicator()),
       };
     }
-    return SetupPage(
-      controller: _controller,
-      choice: _choice,
-      onChoice: (value) => setState(() => _choice = value),
-      onPairing: () => _go(MentorView.pairing),
-    );
+    return const Center(child: CircularProgressIndicator());
   }
 
   @override
   Widget build(BuildContext context) {
-    final guardian = _controller.state?.role == 'guardian';
+    final guardian = !_mvpLoaded && _controller.state?.role == 'guardian';
     final selected = switch (_view) {
       MentorView.inbox || MentorView.incident => 1,
-      MentorView.settings => 2,
       _ => 0,
     };
     final wide = MediaQuery.sizeOf(context).width >= 800;
-    void select(int index) =>
-        _go([MentorView.home, MentorView.inbox, MentorView.settings][index]);
+    void select(int index) => _go([MentorView.home, MentorView.inbox][index]);
     final content = Column(
       children: [
         if (_controller.busy)
           const LinearProgressIndicator(
             semanticsLabel: 'جارٍ انتظار المكوّن الأصلي',
           ),
-        if (_controller.errorCode != null ||
-            _controller.state?.error != null ||
-            _controller.notice != null)
+        if (!_mvpLoaded &&
+            (_controller.errorCode != null ||
+                _controller.state?.error != null ||
+                _controller.notice != null))
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 180),
             child: SingleChildScrollView(
@@ -197,19 +246,20 @@ class _MentorShellState extends State<MentorShell> with WidgetsBindingObserver {
             ),
           IconButton(
             tooltip: 'تحديث الحالة',
-            onPressed: _controller.busy ? null : _controller.refresh,
+            onPressed: _refreshMvp,
             icon: const Icon(Icons.refresh),
           ),
-          PopupMenuButton<String>(
-            tooltip: 'مساعدة وتشخيص',
-            onSelected: (_) => _diagnostics(),
-            itemBuilder: (_) => const [
-              PopupMenuItem(
-                value: 'diagnostics',
-                child: Text('تشخيص التخطيط المحلي المتقدم'),
-              ),
-            ],
-          ),
+          if (!_mvpLoaded)
+            PopupMenuButton<String>(
+              tooltip: 'مساعدة وتشخيص',
+              onSelected: (_) => _diagnostics(),
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'diagnostics',
+                  child: Text('تشخيص التخطيط المحلي المتقدم'),
+                ),
+              ],
+            ),
         ],
       ),
       body: SafeArea(
@@ -229,10 +279,6 @@ class _MentorShellState extends State<MentorShell> with WidgetsBindingObserver {
                     icon: Icon(Icons.inbox_outlined),
                     label: Text('الصندوق'),
                   ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.tune),
-                    label: Text('الإعدادات'),
-                  ),
                 ],
               ),
             Expanded(child: content),
@@ -251,10 +297,6 @@ class _MentorShellState extends State<MentorShell> with WidgetsBindingObserver {
                 NavigationDestination(
                   icon: Icon(Icons.inbox_outlined),
                   label: 'الصندوق',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.tune),
-                  label: 'الإعدادات',
                 ),
               ],
             )

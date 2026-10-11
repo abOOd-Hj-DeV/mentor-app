@@ -112,6 +112,8 @@ internal class ProtectionRuntime(private val service: AccessibilityService) : Au
         if (before?.token != tracker.snapshot?.token || before?.status != tracker.snapshot?.status) changed()
     }
     fun interrupt() { tracker.invalidate(); changed() }
+    fun showMvpBreak(reason: String): Boolean = overlay.showMvpBreak(reason)
+    val mvpVisible: Boolean get() = overlay.mvpVisible
     fun refreshTrustedState() { tracker.invalidate(); changed() }
 
     private fun command(id: String, cmd: CompanionCommand, receivedUs: Long) {
