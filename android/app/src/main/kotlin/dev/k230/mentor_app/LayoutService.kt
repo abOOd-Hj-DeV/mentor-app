@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import java.security.SecureRandom
 import java.util.ArrayDeque
+import dev.k230.mentor_app.protection.ProtectionRuntime
 
 class LayoutService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
@@ -29,9 +30,22 @@ class LayoutService : AccessibilityService() {
         },
     )
     private val socket = LayoutSocket(diagnostics)
+    internal var protection: ProtectionRuntime? = null
+        private set
+    private val continuousUse = dev.k230.mentor_app.protection.ContinuousUseTracker()
+    private var foregroundPackage: String? = null
+    private val mvpMetrics by lazy { MvpMetrics(this) }
+    private val usageCheck = object : Runnable {
+        override fun run() {
+            trackUsage()
+            handler.postDelayed(this, 10_000)
+        }
+    }
     private val session = SecureRandom().nextLong().ushr(1).coerceAtLeast(1)
     private var sequence = 0L
     private var validFromUs = 0L
+    private var lastSnapshotPackage = ""
+    private var lastSnapshotWindowId = -1
     @Volatile private var latest: LayoutSnapshot? = null
     private val refresh = object : Runnable {
         override fun run() {
@@ -42,6 +56,7 @@ class LayoutService : AccessibilityService() {
     private val collectAfterEvent = Runnable { collect() }
 
     override fun onServiceConnected() {
+        dev.k230.mentor_app.protection.NativeSecurityProvider.install(this).initialize()
         instance = this
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) diagnostics.start(session)
         validFromUs = nowUs()
@@ -52,19 +67,58 @@ class LayoutService : AccessibilityService() {
                 collect()
             }
         }
+        protection = ProtectionRuntime(this).also { it.start() }
         handler.post(refresh)
+        handler.post(usageCheck)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        validFromUs = maxOf(validFromUs, minOf(nowUs(), event.eventTime * 1000))
-        invalidate()
+        protection?.event(event)
+        trackUsage()
+        if (mvpMetrics.role() == "child") {
+            if (foregroundIdentityChanged(event.eventType, event.packageName?.toString(), event.windowId,
+                    lastSnapshotPackage, lastSnapshotWindowId)) {
+                validFromUs = nowUs()
+                invalidate()
+            }
+        } else {
+            validFromUs = maxOf(validFromUs, minOf(nowUs(), event.eventTime * 1000))
+            invalidate()
+        }
         handler.removeCallbacks(collectAfterEvent)
         handler.postDelayed(collectAfterEvent, 35)
     }
 
     override fun onInterrupt() {
+        protection?.interrupt()
         validFromUs = nowUs()
         invalidate()
+    }
+
+    fun showMvpBreak(reason: String): Boolean = protection?.showMvpBreak(reason) == true
+
+    private fun trackUsage() {
+        val power = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val lock = getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+        val root = rootInActiveWindow
+        val candidate = root?.packageName?.toString()
+        @Suppress("DEPRECATION")
+        root?.recycle()
+        foregroundPackage = candidate.takeIf {
+            power.isInteractive && !lock.isKeyguardLocked && protection?.mvpVisible != true &&
+                mvpMetrics.role() != "guardian" &&
+                dev.k230.mentor_app.protection.ContinuousUseTracker.eligible(it)
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        mvpMetrics.observeUsage(foregroundPackage, now, System.currentTimeMillis())
+        continuousUse.observe(foregroundPackage, now)?.let {
+            if (showMvpBreak("usage")) {
+                mvpMetrics.intervention("usage")
+                foregroundPackage = null
+                continuousUse.observe(null, now)
+                mvpMetrics.observeUsage(null, now, System.currentTimeMillis())
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -100,6 +154,10 @@ class LayoutService : AccessibilityService() {
 
     @Suppress("DEPRECATION")
     private fun collectSnapshot() {
+        if (mvpMetrics.role() == "child") {
+            collectForeground()
+            return
+        }
         val dimensions = screen() ?: return
         val start = nowUs()
         diagnostics.collectorStage("root")
@@ -183,6 +241,49 @@ class LayoutService : AccessibilityService() {
         socket.publish(snapshot)
     }
 
+    @Suppress("DEPRECATION")
+    private fun collectForeground() {
+        val dimensions = screen() ?: return
+        val start = nowUs()
+        diagnostics.collectorStage("foreground_root")
+        val root = rootInActiveWindow
+        var interactiveWindows = emptyList<AccessibilityWindowInfo>()
+        try {
+            val packageName = root?.packageName?.toString().orEmpty()
+            val windowId = root?.windowId ?: -1
+            if (packageName != lastSnapshotPackage || windowId != lastSnapshotWindowId) {
+                validFromUs = start
+                lastSnapshotPackage = packageName
+                lastSnapshotWindowId = windowId
+            }
+            diagnostics.collectorStage("foreground_windows")
+            interactiveWindows = windows
+            val applications = interactiveWindows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            val active = applications.singleOrNull()
+            val valid = root != null && packageName.length <= 256 &&
+                packageName.matches(Regex("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) &&
+                windowId >= 0 && active != null && active.id == windowId && active.isActive && active.isFocused &&
+                (Build.VERSION.SDK_INT < 30 || active.displayId == Display.DEFAULT_DISPLAY) &&
+                screen() == dimensions && magnificationController.scale == 1f
+            val flags = if (valid) LayoutWire.PARTIAL or LayoutWire.FOREGROUND_ONLY
+                else LayoutWire.PARTIAL or LayoutWire.INVALIDATE
+            if (!valid) validFromUs = start
+            val snapshot = LayoutSnapshot(
+                flags, session, ++sequence, start, nowUs(), minOf(validFromUs, start),
+                dimensions.first, dimensions.second, dimensions.third, 0, windowId,
+                if (valid) packageName else "", emptyList(),
+            )
+            latest = snapshot
+            diagnostics.collectorStage("publish_foreground")
+            socket.publish(snapshot)
+        } finally {
+            if (Build.VERSION.SDK_INT < 33) {
+                root?.recycle()
+                interactiveWindows.forEach { it.recycle() }
+            }
+        }
+    }
+
     fun status() = mapOf(
         "running" to true, "connected" to socket.connected, "error" to socket.error,
         "sequence" to latest?.sequence, "nodes" to latest?.nodes?.size,
@@ -191,9 +292,12 @@ class LayoutService : AccessibilityService() {
     )
 
     override fun onDestroy() {
+        handler.removeCallbacks(usageCheck)
         diagnostics.event("service_destroy")
         handler.removeCallbacksAndMessages(null)
         socket.close()
+        protection?.close()
+        protection = null
         diagnostics.close()
         if (instance === this) instance = null
         super.onDestroy()
@@ -205,3 +309,9 @@ class LayoutService : AccessibilityService() {
         private fun nowUs() = System.nanoTime() / 1000
     }
 }
+
+internal fun foregroundIdentityChanged(eventType: Int, packageName: String?, windowId: Int,
+        previousPackage: String, previousWindowId: Int): Boolean =
+    eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+        eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
+        packageName != previousPackage || windowId != previousWindowId

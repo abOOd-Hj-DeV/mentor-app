@@ -1,0 +1,7 @@
+.firebaserc
+.env*
+!.env.example
+*-debug.log
+.firebase/
+service-account*.json
+google-services.json

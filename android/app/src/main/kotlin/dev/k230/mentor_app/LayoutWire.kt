@@ -27,6 +27,7 @@ data class LayoutSnapshot(
 object LayoutWire {
     const val PARTIAL = 1
     const val INVALIDATE = 2
+    const val FOREGROUND_ONLY = 4
     const val MAX_NODES = 256
     const val HEADER_BYTES = 76
     const val NODE_BYTES = 24
@@ -36,7 +37,10 @@ object LayoutWire {
     fun encode(snapshot: LayoutSnapshot): ByteArray {
         val name = snapshot.packageName.toByteArray(Charsets.US_ASCII)
         require(name.size <= 256 && snapshot.packageName.all { it.code in 33..126 })
-        require(snapshot.flags in 0..3)
+        require(snapshot.flags in 0..7)
+        require(snapshot.flags and FOREGROUND_ONLY == 0 ||
+            (snapshot.flags == (PARTIAL or FOREGROUND_ONLY) && snapshot.nodes.isEmpty() &&
+                snapshot.packageName.isNotEmpty() && snapshot.windowId >= 0))
         require(snapshot.session > 0 && snapshot.sequence > 0)
         require(snapshot.sampledAtUs >= 0 && snapshot.completedAtUs >= snapshot.sampledAtUs)
         require(snapshot.validFromUs in 0..snapshot.sampledAtUs)

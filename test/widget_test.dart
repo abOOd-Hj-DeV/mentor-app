@@ -23,7 +23,7 @@ void main() {
             'package': 'dev.example',
           };
         });
-    await tester.pumpWidget(const MentorApp());
+    await tester.pumpWidget(const MaterialApp(home: LayoutPage()));
     await tester.pump();
     expect(find.text('خدمة التخطيط تعمل'), findsOneWidget);
     expect(find.text('قناة ADB متصلة'), findsOneWidget);

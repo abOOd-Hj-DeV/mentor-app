@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mentor:parental-v2.0:incident",
+  "title": "incident",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "type": {
+      "const": "incident"
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "incident_revision": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,18}$"
+    },
+    "child_device_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "occurred_at_ms": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,18})$"
+    },
+    "time_source": {
+      "const": "device_wall_clock"
+    },
+    "app_package": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$",
+      "maxLength": 255
+    },
+    "category": {
+      "enum": [
+        "explicit",
+        "hentai_dominant"
+      ]
+    },
+    "scores": {
+      "type": "object",
+      "properties": {
+        "porn": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "hentai": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "sexy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "explicit_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "porn",
+        "hentai",
+        "sexy",
+        "explicit_score"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "enum": [
+            "explicit",
+            "hentai_dominant"
+          ]
+        },
+        "frame_count": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 32
+        },
+        "span_us": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,18})$"
+        },
+        "first_pts_us": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,18})$"
+        },
+        "last_pts_us": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,18})$"
+        },
+        "complete": {
+          "const": true
+        }
+      },
+      "required": [
+        "route",
+        "frame_count",
+        "span_us",
+        "first_pts_us",
+        "last_pts_us",
+        "complete"
+      ],
+      "additionalProperties": false
+    },
+    "stage": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "requested": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "cover_region",
+            "calm_shield",
+            "home"
+          ]
+        },
+        "stage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        }
+      },
+      "required": [
+        "action",
+        "stage"
+      ],
+      "additionalProperties": false
+    },
+    "executed": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "none",
+            "cover_region",
+            "calm_shield",
+            "home"
+          ]
+        },
+        "stage": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "status": {
+          "enum": [
+            "executed",
+            "failed",
+            "rejected",
+            "unknown",
+            "released"
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "enum": [
+                "unsupported_version",
+                "malformed_json",
+                "bounds",
+                "invalid_age",
+                "policy_mismatch",
+                "session_mismatch",
+                "stream_mismatch",
+                "stale",
+                "future_pts",
+                "clock_unverified",
+                "wrong_screen",
+                "invalid_transform",
+                "invalid_scores",
+                "invalid_evidence",
+                "hentai_stage3_forbidden",
+                "capability_missing",
+                "permission_missing",
+                "locked",
+                "action_failed",
+                "home_unverified",
+                "event_conflict",
+                "rate_limited",
+                "busy",
+                "storage_failed"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "stage",
+        "status",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "versions": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "mentor-parental-v2.0"
+        },
+        "policy": {
+          "const": "age-10-15-v1"
+        },
+        "policy_revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "app": {
+          "type": "string",
+          "pattern": "^[ -~]{1,32}$"
+        },
+        "model": {
+          "const": "nsfwjs-mobilenet-v2-onnx"
+        }
+      },
+      "required": [
+        "contract",
+        "policy",
+        "policy_revision",
+        "app",
+        "model"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "v",
+    "type",
+    "event_id",
+    "incident_revision",
+    "child_device_id",
+    "occurred_at_ms",
+    "time_source",
+    "app_package",
+    "category",
+    "scores",
+    "evidence",
+    "stage",
+    "requested",
+    "executed",
+    "versions"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mentor:parental-v2.0:envelope",
+  "title": "envelope",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "kind": {
+      "enum": [
+        "incident",
+        "control",
+        "control_receipt"
+      ]
+    },
+    "pair_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "sender_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "recipient_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "message_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "recipient_hpke_kid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sender_signing_kid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "suite": {
+      "const": "HPKE_X25519_HKDF_SHA256_AES256GCM_RAW+ECDSA_P256_SHA256_DER"
+    },
+    "ciphertext_b64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 66,
+      "maxLength": 21910
+    },
+    "signature_b64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 11,
+      "maxLength": 96
+    }
+  },
+  "required": [
+    "v",
+    "kind",
+    "pair_id",
+    "sender_id",
+    "recipient_id",
+    "message_id",
+    "recipient_hpke_kid",
+    "sender_signing_kid",
+    "suite",
+    "ciphertext_b64",
+    "signature_b64"
+  ],
+  "additionalProperties": false
+}
